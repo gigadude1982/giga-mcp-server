@@ -8,6 +8,8 @@ build/
 
 .env
 .giga_watermark
+.venv/
+giga.log
 
 # WhatsApp bridge store (contains session + messages)
 whatsapp-bridge/store/
