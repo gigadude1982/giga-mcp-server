@@ -47,7 +47,7 @@ WhatsApp Group  ──>  giga-mcp-server  ──>  JIRA Kanban Board
 # Clone and install
 git clone git@github.com:gigadude1982/giga-mcp-server.git
 cd giga-mcp-server
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 
 # Development install
