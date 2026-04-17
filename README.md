@@ -49,10 +49,13 @@ git clone git@github.com:gigadude1982/giga-mcp-server.git
 cd giga-mcp-server
 python3.12 -m venv .venv
 source .venv/bin/activate
+
+# Development install
 pip install -e ".[dev]"
 
-# For LLM parser support
-pip install -e ".[llm]"
+# Development install with LLM parser support
+# (use this instead of the command above if you want LLM features)
+pip install -e ".[dev,llm]"
 ```
 
 ## Configuration
