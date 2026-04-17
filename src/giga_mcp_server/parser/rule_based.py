@@ -73,7 +73,7 @@ class RuleBasedParser(MessageParser):
         return summary
 
     def _build_description(self, content: str, sender: str) -> str:
-        lines = [content, "", f"---", f"Submitted via WhatsApp by {sender}"]
+        lines = [content, "", "---", f"Submitted via WhatsApp by {sender}"]
         return "\n".join(lines)
 
     def _extract_priority(self, content: str) -> str:
