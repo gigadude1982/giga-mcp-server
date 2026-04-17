@@ -8,6 +8,7 @@ from atlassian import Jira
 
 from giga_mcp_server.config import Settings
 from giga_mcp_server.models import IdeaResult, ParsedIdea
+from giga_mcp_server.retry import async_retry
 
 logger = structlog.get_logger()
 
@@ -24,6 +25,7 @@ class JiraClient:
             cloud=True,
         )
 
+    @async_retry(max_attempts=3, base_delay=2.0)
     async def create_story(self, idea: ParsedIdea) -> IdeaResult:
         """Create a JIRA issue from a parsed idea. Runs sync API in a thread."""
         return await asyncio.to_thread(self._create_story_sync, idea)
@@ -60,6 +62,7 @@ class JiraClient:
             status=self._settings.jira_intake_status,
         )
 
+    @async_retry(max_attempts=3, base_delay=1.0)
     async def search_issues(self, jql: str, max_results: int = 20) -> list[dict[str, Any]]:
         """Search JIRA issues using JQL. Returns simplified issue dicts."""
         results = await asyncio.to_thread(
@@ -77,6 +80,16 @@ class JiraClient:
                 "url": f"{self._settings.jira_url}/browse/{issue['key']}",
             })
         return issues
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def add_comment(self, issue_key: str, body: str) -> bool:
+        """Add a comment to a JIRA issue."""
+        try:
+            await asyncio.to_thread(self._jira.issue_add_comment, issue_key, body)
+            return True
+        except Exception:
+            logger.exception("add_comment_error", issue_key=issue_key)
+            return False
 
     async def transition_issue(self, issue_key: str, status: str) -> bool:
         """Transition a JIRA issue to a new status."""
