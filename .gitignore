@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+.env
+.giga_watermark
+
+# WhatsApp bridge store (contains session + messages)
+whatsapp-bridge/store/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
