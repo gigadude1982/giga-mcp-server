@@ -11,10 +11,10 @@ WhatsApp Group  ──>  giga-mcp-server  ──>  JIRA Kanban Board
 ```
 
 1. A human sends an idea or thought to a designated WhatsApp group
-2. The server polls the WhatsApp bridge for new messages
+2. The server polls/reads new messages from the `whatsapp-mcp` SQLite store
 3. Messages are parsed into structured JIRA fields (summary, priority, labels, issue type)
 4. A story is created on the configured JIRA Kanban board
-5. A confirmation with the ticket link is sent back to the WhatsApp group
+5. A confirmation with the ticket link is sent back to the WhatsApp group via the WhatsApp bridge
 
 ## Features
 
