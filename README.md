@@ -76,7 +76,7 @@ Key settings:
 | `GIGA_JIRA_API_TOKEN` | Atlassian API token |
 | `GIGA_JIRA_PROJECT_KEY` | JIRA project key (e.g., `PROJ`) |
 | `GIGA_PARSER_TYPE` | `rule_based` (default) or `llm` |
-| `GIGA_ANTHROPIC_API_KEY` | Required if `parser_type=llm` |
+| `GIGA_ANTHROPIC_API_KEY` | Required if `GIGA_PARSER_TYPE=llm` |
 | `GIGA_LOG_FILE` | Optional path for file logging |
 | `GIGA_TRANSPORT` | `stdio` (default) or `streamable-http` |
 
