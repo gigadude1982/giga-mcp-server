@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 
 import anthropic
@@ -39,7 +40,10 @@ Guidelines:
 class LLMParser(MessageParser):
     """Parses WhatsApp messages into JIRA ideas using Claude."""
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-haiku-4-5-20251001") -> None:
+    # TODO: make LLM parser model configurable and support multiple providers (Anthropic, OpenAI, etc.)
+    def __init__(
+        self, api_key: str | None = None, model: str = "claude-haiku-4-5-20251001"
+    ) -> None:
         if not api_key:
             raise ValueError("GIGA_ANTHROPIC_API_KEY is required for the LLM parser")
         self._client = anthropic.Anthropic(api_key=api_key)
@@ -80,6 +84,10 @@ class LLMParser(MessageParser):
         )
 
         raw_text = response.content[0].text.strip()
+        # Strip markdown code fences if the model wraps its JSON output
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+            raw_text = re.sub(r"\s*```$", "", raw_text)
         data = json.loads(raw_text)
 
         return ParsedIdea(
