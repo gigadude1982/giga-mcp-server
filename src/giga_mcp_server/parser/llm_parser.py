@@ -85,9 +85,9 @@ class LLMParser(MessageParser):
         return ParsedIdea(
             summary=data.get("summary", content[:120])[:120],
             description=data.get("description", content),
-            priority=data.get("priority", "Medium"),
+            priority=data.get("priority", ""),
             labels=[tag.lower() for tag in data.get("labels", [])],
-            issue_type=data.get("issue_type", "Story"),
+            issue_type=data.get("issue_type", ""),
             raw_message=content,
             sender=sender,
             timestamp=timestamp,

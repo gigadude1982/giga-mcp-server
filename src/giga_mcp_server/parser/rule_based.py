@@ -80,7 +80,7 @@ class RuleBasedParser(MessageParser):
         for pattern, priority in _PRIORITY_PATTERNS:
             if pattern.search(content):
                 return priority
-        return "Medium"
+        return ""
 
     def _extract_labels(self, content: str) -> list[str]:
         return [tag.lower() for tag in _HASHTAG_PATTERN.findall(content)]
@@ -89,4 +89,4 @@ class RuleBasedParser(MessageParser):
         for pattern, issue_type in _TYPE_PATTERNS:
             if pattern.search(content):
                 return issue_type
-        return "Story"
+        return ""

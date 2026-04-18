@@ -66,12 +66,17 @@ def _get_parser(settings: Settings) -> MessageParser:
 
 @asynccontextmanager
 async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Lifespan with mock clients for MCP Inspector / dry-run mode."""
-    from giga_mcp_server.inspect_stubs import MockJiraClient, MockPoller, MockWhatsAppClient
+    """Lifespan for MCP Inspector: real JIRA client, mocked WhatsApp/poller."""
+    from giga_mcp_server.inspect_stubs import MockPoller, MockWhatsAppClient
 
     settings = Settings()
+    if not all([settings.jira_url, settings.jira_username, settings.jira_api_token]):
+        raise ValueError(
+            "JIRA credentials required in .env for inspect mode "
+            "(GIGA_JIRA_URL, GIGA_JIRA_USERNAME, GIGA_JIRA_API_TOKEN)"
+        )
     wa_client = MockWhatsAppClient()
-    jira_client = MockJiraClient()
+    jira_client = JiraClient(settings)
     parser = _get_parser(settings)
     pipeline = IdeaPipeline(wa_client, jira_client, parser, settings)  # type: ignore[arg-type]
     poller = MockPoller()
@@ -80,7 +85,7 @@ async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     yield AppContext(
         pipeline=pipeline,
         wa_client=wa_client,  # type: ignore[arg-type]
-        jira_client=jira_client,  # type: ignore[arg-type]
+        jira_client=jira_client,
         poller=poller,  # type: ignore[arg-type]
         settings=settings,
     )

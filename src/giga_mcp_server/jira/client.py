@@ -13,6 +13,7 @@ from giga_mcp_server.retry import async_retry
 logger = structlog.get_logger()
 
 
+# TODO: replace with Atlassian Rovo MCP server if cleaner
 class JiraClient:
     """Creates and manages JIRA issues using atlassian-python-api."""
 
@@ -63,22 +64,29 @@ class JiraClient:
         )
 
     @async_retry(max_attempts=3, base_delay=1.0)
-    async def search_issues(self, jql: str, max_results: int = 20) -> list[dict[str, Any]]:
+    async def search_issues(
+        self, jql: str, max_results: int = 20
+    ) -> list[dict[str, Any]]:
         """Search JIRA issues using JQL. Returns simplified issue dicts."""
         results = await asyncio.to_thread(
-            self._jira.jql, jql, limit=max_results, fields="summary,status,priority,created"
+            self._jira.jql,
+            jql,
+            limit=max_results,
+            fields="summary,status,priority,created",
         )
         issues = []
         for issue in results.get("issues", []):
             fields = issue["fields"]
-            issues.append({
-                "key": issue["key"],
-                "summary": fields.get("summary", ""),
-                "status": fields.get("status", {}).get("name", ""),
-                "priority": fields.get("priority", {}).get("name", ""),
-                "created": fields.get("created", ""),
-                "url": f"{self._settings.jira_url}/browse/{issue['key']}",
-            })
+            issues.append(
+                {
+                    "key": issue["key"],
+                    "summary": fields.get("summary", ""),
+                    "status": fields.get("status", {}).get("name", ""),
+                    "priority": fields.get("priority", {}).get("name", ""),
+                    "created": fields.get("created", ""),
+                    "url": f"{self._settings.jira_url}/browse/{issue['key']}",
+                }
+            )
         return issues
 
     @async_retry(max_attempts=3, base_delay=1.0)
@@ -94,7 +102,9 @@ class JiraClient:
     async def transition_issue(self, issue_key: str, status: str) -> bool:
         """Transition a JIRA issue to a new status."""
         try:
-            transitions = await asyncio.to_thread(self._jira.get_issue_transitions, issue_key)
+            transitions = await asyncio.to_thread(
+                self._jira.get_issue_transitions, issue_key
+            )
             target = next(
                 (t for t in transitions if t["name"].lower() == status.lower()),
                 None,

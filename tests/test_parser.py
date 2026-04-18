@@ -13,7 +13,7 @@ class TestRuleBasedParser:
         idea = self.parser.parse("Build a dashboard for tracking user signups", "alice")
         assert idea.summary == "Build a dashboard for tracking user signups"
         assert idea.issue_type == "Story"
-        assert idea.priority == "Medium"
+        assert idea.priority == ""  # No priority keyword → empty (config default applied later)
         assert idea.sender == "alice"
 
     def test_high_priority_detection(self) -> None:
@@ -72,6 +72,6 @@ class TestRuleBasedParser:
         idea = self.parser.parse("implement a new notification system", "alice")
         assert idea.issue_type == "Story"
 
-    def test_default_issue_type_is_story(self) -> None:
+    def test_default_issue_type_is_empty(self) -> None:
         idea = self.parser.parse("something without keywords", "alice")
-        assert idea.issue_type == "Story"
+        assert idea.issue_type == ""  # No keyword match → empty (config default applied later)

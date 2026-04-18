@@ -18,9 +18,9 @@ class WhatsAppMessage:
 class ParsedIdea:
     summary: str
     description: str
-    priority: str = "Medium"  # Highest, High, Medium, Low, Lowest
+    priority: str = ""  # Highest, High, Medium, Low, Lowest (empty → config default)
     labels: list[str] = field(default_factory=list)
-    issue_type: str = "Story"  # Story, Task, Bug
+    issue_type: str = ""  # Story, Task, Bug (empty → config default)
     components: list[str] = field(default_factory=list)
     raw_message: str = ""
     sender: str = ""
