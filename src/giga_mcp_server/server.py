@@ -84,7 +84,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         yield ctx
 
 
-mcp = FastMCP("giga-mcp-server", lifespan=lifespan)
+mcp = FastMCP("giga-mcp-server", lifespan=lifespan, host="0.0.0.0", port=8000)
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,9 @@ def main() -> None:
         logger.info("logging_to_file", path=settings.log_file)
 
     if settings.transport == "streamable-http":
-        mcp.run(transport="streamable-http", host=settings.host, port=settings.port)
+        mcp.settings.host = settings.host
+        mcp.settings.port = settings.port
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
 
