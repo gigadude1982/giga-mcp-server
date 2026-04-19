@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+cleanup() {
+    echo "Shutting down..."
+    kill "$BRIDGE_PID" 2>/dev/null || true
+    wait "$BRIDGE_PID" 2>/dev/null || true
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
 # Start the Go WhatsApp bridge in the background
 echo "Starting WhatsApp bridge..."
 mkdir -p /app/store
@@ -11,8 +19,12 @@ BRIDGE_PID=$!
 # Wait for the bridge to be ready
 echo "Waiting for WhatsApp bridge on port 8080..."
 for i in $(seq 1 30); do
-    if curl -sf http://localhost:8080/api/send > /dev/null 2>&1 || [ $i -eq 30 ]; then
+    if curl -sf http://localhost:8080/api/send > /dev/null 2>&1; then
+        echo "WhatsApp bridge is ready."
         break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "Warning: WhatsApp bridge did not respond within 30s, starting anyway."
     fi
     sleep 1
 done
