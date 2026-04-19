@@ -6,17 +6,20 @@
 #   - Docker running
 #
 # Usage:
-#   ./deploy.sh              # First deploy (creates everything)
-#   ./deploy.sh --update     # Update existing service with new image
+#   ./deploy.sh                        # First deploy (creates everything)
+#   ./deploy.sh --update               # Update existing service with new image
+#   ./deploy.sh --setup-domain         # Link custom domain (run after first deploy)
 #
 # Set these env vars or pass as arguments:
 #   AWS_REGION          (default: us-east-1)
 #   APP_NAME            (default: giga-mcp-server)
+#   CUSTOM_DOMAIN       (default: mcp.gigacorp.co)
 
 set -euo pipefail
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 APP_NAME="${APP_NAME:-giga-mcp-server}"
+CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-mcp.gigacorp.co}"
 ECR_REPO="$APP_NAME"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO"
@@ -45,7 +48,58 @@ echo "==> Pushing image"
 docker push "$ECR_URI:$IMAGE_TAG"
 
 # --- App Runner ---
-if [[ "${1:-}" == "--update" ]]; then
+if [[ "${1:-}" == "--setup-domain" ]]; then
+    echo "==> Setting up custom domain: $CUSTOM_DOMAIN"
+    SERVICE_ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='$APP_NAME'].ServiceArn" --output text --region "$AWS_REGION")
+    if [[ -z "$SERVICE_ARN" ]]; then
+        echo "ERROR: Service '$APP_NAME' not found. Deploy first."
+        exit 1
+    fi
+
+    # Associate custom domain with App Runner (App Runner handles the cert)
+    RESULT=$(aws apprunner associate-custom-domain \
+        --service-arn "$SERVICE_ARN" \
+        --domain-name "$CUSTOM_DOMAIN" \
+        --enable-www-subdomain=false \
+        --region "$AWS_REGION" \
+        --output json 2>&1) || true
+
+    if echo "$RESULT" | grep -q "already associated"; then
+        echo "Domain already associated. Checking status..."
+    else
+        echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"
+    fi
+
+    # Show the DNS records that need to be created in Route 53
+    echo ""
+    echo "==> DNS records to create in Route 53 for $CUSTOM_DOMAIN:"
+    echo ""
+    aws apprunner describe-custom-domains \
+        --service-arn "$SERVICE_ARN" \
+        --region "$AWS_REGION" \
+        --query 'CustomDomains[0].CertificateValidationRecords' \
+        --output table 2>/dev/null || true
+
+    # Get the App Runner target for the CNAME
+    SERVICE_URL=$(aws apprunner describe-service \
+        --service-arn "$SERVICE_ARN" \
+        --query 'Service.ServiceUrl' \
+        --output text \
+        --region "$AWS_REGION")
+
+    echo ""
+    echo "Create these DNS records in Route 53 (gigacorp.co hosted zone):"
+    echo ""
+    echo "  1. CNAME: $CUSTOM_DOMAIN → $SERVICE_URL"
+    echo "     (This points your domain to the App Runner service)"
+    echo ""
+    echo "  2. CNAME validation records shown above"
+    echo "     (These prove domain ownership for the SSL certificate)"
+    echo ""
+    echo "After adding DNS records, validation takes ~5-10 minutes."
+    echo "Check status: aws apprunner describe-custom-domains --service-arn $SERVICE_ARN --region $AWS_REGION"
+
+elif [[ "${1:-}" == "--update" ]]; then
     echo "==> Updating App Runner service"
     SERVICE_ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='$APP_NAME'].ServiceArn" --output text --region "$AWS_REGION")
     if [[ -z "$SERVICE_ARN" ]]; then
@@ -154,6 +208,9 @@ else
     echo ""
     echo "  3. Get your service URL:"
     echo "     aws apprunner list-services --region $AWS_REGION"
+    echo ""
+    echo "  4. Set up custom domain ($CUSTOM_DOMAIN):"
+    echo "     ./deploy.sh --setup-domain"
 fi
 
 echo "==> Done."
