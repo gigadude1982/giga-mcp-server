@@ -9,6 +9,10 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir .
 
+ENV GIGA_TRANSPORT=streamable-http
+ENV GIGA_HOST=0.0.0.0
+ENV GIGA_PORT=8000
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
