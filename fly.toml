@@ -7,8 +7,6 @@ primary_region = "ord"
   GIGA_TRANSPORT = "streamable-http"
   GIGA_HOST = "0.0.0.0"
   GIGA_PORT = "8000"
-  GIGA_WHATSAPP_DB_PATH = "/app/store/messages.db"
-  GIGA_WHATSAPP_BRIDGE_URL = "http://localhost:8080"
 
 [http_service]
   internal_port = 8000
@@ -20,7 +18,3 @@ primary_region = "ord"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
-
-[mounts]
-  source = "whatsapp_store"
-  destination = "/app/store"
