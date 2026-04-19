@@ -11,6 +11,7 @@ from giga_mcp_server.models import WhatsAppMessage
 logger = structlog.get_logger()
 
 
+# TODO: replace with whatsapp-mcp Go bridge client if cleaner
 class WhatsAppClient:
     """Reads messages from the whatsapp-mcp SQLite DB and sends via the Go bridge HTTP API."""
 
