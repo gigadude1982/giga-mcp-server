@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -57,7 +58,7 @@ async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     jira_client = MockJiraClient(settings)
     enricher = MockTicketEnricher(jira_client, settings)
 
-    logger.info("server_started", transport=settings.transport, mode="inspect")
+    logger.info("server_started", version=_VERSION, transport=settings.transport, mode="inspect")
     yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
     logger.info("server_stopped")
 
@@ -70,7 +71,7 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     jira_client = JiraClient(settings)
     enricher = TicketEnricher(jira_client, settings)
 
-    logger.info("server_started", transport=settings.transport)
+    logger.info("server_started", version=_VERSION, transport=settings.transport)
     yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
     logger.info("server_stopped")
 
@@ -84,7 +85,10 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         yield ctx
 
 
+_VERSION = importlib.metadata.version("giga-mcp-server")
+
 mcp = FastMCP("giga-mcp-server", lifespan=lifespan, host="0.0.0.0", port=8000)
+mcp._mcp_server.version = _VERSION
 
 
 # ---------------------------------------------------------------------------
