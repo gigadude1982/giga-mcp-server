@@ -97,6 +97,28 @@ def _app(ctx: Context) -> AppContext:
 
 
 @mcp.tool()
+async def create_story(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
+    """Create a JIRA ticket from a natural language description. AI structures it into a proper story with priority, labels, and acceptance criteria.
+
+    Args:
+        description: Natural language description of the feature, bug, or task.
+        auto_enrich: If true, automatically enrich the ticket after creation (adds acceptance criteria, subtasks, etc).
+    """
+    app = _app(ctx)
+    result = await app.enricher.create_story(description, auto_enrich=auto_enrich)
+
+    lines = [
+        f"## Created {result.jira_key}",
+        f"**Summary:** {result.summary}",
+        f"**Status:** {result.status}",
+        f"**URL:** {result.jira_url}",
+    ]
+    if auto_enrich:
+        lines.append("*Auto-enriched with AI analysis.*")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 async def analyze_ticket(issue_key: str, ctx: Context = None) -> str:
     """Analyze a JIRA ticket with AI and preview suggested enrichments. Does NOT modify JIRA.
 

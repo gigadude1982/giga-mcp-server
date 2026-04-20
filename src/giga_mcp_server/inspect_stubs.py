@@ -129,6 +129,17 @@ class MockTicketEnricher:
         self._jira = jira_client
         self._settings = settings
 
+    async def create_story(
+        self, description: str, auto_enrich: bool = True
+    ) -> IdeaResult:
+        key = f"DEMO-{random.randint(200, 299)}"
+        return IdeaResult(
+            jira_key=key,
+            jira_url=f"https://demo.atlassian.net/browse/{key}",
+            summary=description[:80],
+            status="To Do",
+        )
+
     async def analyze_ticket(self, issue_key: str) -> TicketAnalysis:
         return TicketAnalysis(
             issue_key=issue_key,
