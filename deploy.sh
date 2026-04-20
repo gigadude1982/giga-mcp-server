@@ -14,6 +14,9 @@
 #   AWS_REGION          (default: us-east-1)
 #   APP_NAME            (default: giga-mcp-server)
 #   CUSTOM_DOMAIN       (default: mcp.gigacorp.co)
+#   GIGA_COGNITO_USER_POOL_ID  (optional — enables OAuth)
+#   GIGA_COGNITO_REGION        (optional, default: us-east-1)
+#   GIGA_COGNITO_CLIENT_ID     (optional)
 
 set -euo pipefail
 
@@ -24,6 +27,16 @@ ECR_REPO="$APP_NAME"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO"
 IMAGE_TAG="latest"
+
+# Build optional Cognito env vars for runtime config
+COGNITO_VARS=""
+if [[ -n "${GIGA_COGNITO_USER_POOL_ID:-}" ]]; then
+    COGNITO_VARS="\"GIGA_COGNITO_USER_POOL_ID\": \"$GIGA_COGNITO_USER_POOL_ID\""
+    COGNITO_VARS="$COGNITO_VARS, \"GIGA_COGNITO_REGION\": \"${GIGA_COGNITO_REGION:-us-east-1}\""
+    [[ -n "${GIGA_COGNITO_CLIENT_ID:-}" ]] && COGNITO_VARS="$COGNITO_VARS, \"GIGA_COGNITO_CLIENT_ID\": \"$GIGA_COGNITO_CLIENT_ID\""
+    COGNITO_VARS="$COGNITO_VARS, \"GIGA_PUBLIC_URL\": \"https://$CUSTOM_DOMAIN\""
+    COGNITO_VARS=", $COGNITO_VARS"
+fi
 
 echo "==> Account: $ACCOUNT_ID | Region: $AWS_REGION"
 
@@ -117,7 +130,7 @@ elif [[ "${1:-}" == "--update" ]]; then
                     \"RuntimeEnvironmentVariables\": {
                         \"GIGA_TRANSPORT\": \"streamable-http\",
                         \"GIGA_HOST\": \"0.0.0.0\",
-                        \"GIGA_PORT\": \"8000\"
+                        \"GIGA_PORT\": \"8000\"$COGNITO_VARS
                     }
                 }
             },
@@ -172,7 +185,7 @@ else
                     \"RuntimeEnvironmentVariables\": {
                         \"GIGA_TRANSPORT\": \"streamable-http\",
                         \"GIGA_HOST\": \"0.0.0.0\",
-                        \"GIGA_PORT\": \"8000\"
+                        \"GIGA_PORT\": \"8000\"$COGNITO_VARS
                     }
                 }
             },
