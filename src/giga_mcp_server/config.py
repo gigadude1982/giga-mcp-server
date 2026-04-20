@@ -21,12 +21,22 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="", description="Anthropic API key for Claude")
     anthropic_model: str = "claude-haiku-4-5-20251001"
 
+    # Auth (Cognito) — leave blank to disable auth
+    cognito_user_pool_id: str = ""
+    cognito_region: str = "us-east-1"
+    cognito_client_id: str = ""
+    public_url: str = ""  # e.g. https://mcp.gigacorp.co — used for OAuth resource metadata
+
     # Server
     transport: str = "stdio"  # "stdio" or "streamable-http"
     host: str = "0.0.0.0"
     port: int = 8000
     inspect: bool = False
     log_file: str | None = None
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.cognito_user_pool_id)
 
     def validate_required(self) -> None:
         """Validate that required fields are set for production."""

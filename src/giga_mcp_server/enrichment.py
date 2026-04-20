@@ -10,7 +10,13 @@ import structlog
 
 from giga_mcp_server.config import Settings
 from giga_mcp_server.jira.client import JiraClient
-from giga_mcp_server.models import EnrichmentResult, SubtaskSuggestion, TicketAnalysis
+from giga_mcp_server.models import (
+    EnrichmentResult,
+    IdeaResult,
+    ParsedIdea,
+    SubtaskSuggestion,
+    TicketAnalysis,
+)
 
 logger = structlog.get_logger()
 
@@ -49,6 +55,33 @@ Guidelines:
 """
 
 
+_STORY_CREATION_PROMPT = """\
+You are a JIRA story writer. Given a natural language description of a feature, bug, or task, \
+create a well-structured JIRA ticket.
+
+Return ONLY valid JSON (no markdown, no explanation):
+
+{
+  "summary": "Concise ticket title (under 80 chars)",
+  "description": "Detailed description with context, requirements, and acceptance criteria",
+  "priority": "One of: Highest, High, Medium, Low, Lowest",
+  "issue_type": "One of: Story, Task, Bug, Epic",
+  "labels": ["lowercase_labels"]
+}
+
+Guidelines:
+- Write a clear, actionable summary (not the raw input — refine it)
+- Expand the description with context, steps, and expected behavior
+- Include acceptance criteria in the description using Given/When/Then format
+- If the input mentions a bug, crash, error, or broken feature → issue_type = "Bug"
+- If it's a chore, cleanup, maintenance, or infra → issue_type = "Task"
+- Default to "Story" for new features
+- Detect urgency from words like "urgent", "critical", "asap" → High/Highest
+- Default priority is "Medium"
+- Infer labels from context (e.g., "login" → "auth", "API" → "api", "UI" → "frontend")
+"""
+
+
 class TicketEnricher:
     """Analyzes and enriches JIRA tickets using Claude."""
 
@@ -61,6 +94,36 @@ class TicketEnricher:
         self._settings = settings
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._model = settings.anthropic_model
+
+    async def create_story(self, description: str, auto_enrich: bool = True) -> IdeaResult:
+        """Parse a natural language description into a JIRA ticket using AI."""
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            system=_STORY_CREATION_PROMPT,
+            messages=[{"role": "user", "content": description}],
+        )
+        raw_text = response.content[0].text.strip()
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+        data = json.loads(raw_text)
+
+        idea = ParsedIdea(
+            summary=data.get("summary", description[:80]),
+            description=data.get("description", description),
+            priority=data.get("priority", "Medium"),
+            issue_type=data.get("issue_type", "Story"),
+            labels=data.get("labels", []),
+        )
+
+        result = await self._jira.create_story(idea)
+        logger.info("story_created", issue_key=result.jira_key, summary=idea.summary)
+
+        if auto_enrich:
+            await self.enrich_ticket(result.jira_key)
+            logger.info("story_auto_enriched", issue_key=result.jira_key)
+
+        return result
 
     async def analyze_ticket(self, issue_key: str) -> TicketAnalysis:
         """Fetch a ticket and return AI analysis without modifying JIRA."""

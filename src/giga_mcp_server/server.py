@@ -97,6 +97,28 @@ def _app(ctx: Context) -> AppContext:
 
 
 @mcp.tool()
+async def create_story(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
+    """Create a JIRA ticket from a natural language description. AI structures it into a proper story with priority, labels, and acceptance criteria.
+
+    Args:
+        description: Natural language description of the feature, bug, or task.
+        auto_enrich: If true, automatically enrich the ticket after creation (adds acceptance criteria, subtasks, etc).
+    """
+    app = _app(ctx)
+    result = await app.enricher.create_story(description, auto_enrich=auto_enrich)
+
+    lines = [
+        f"## Created {result.jira_key}",
+        f"**Summary:** {result.summary}",
+        f"**Status:** {result.status}",
+        f"**URL:** {result.jira_url}",
+    ]
+    if auto_enrich:
+        lines.append("*Auto-enriched with AI analysis.*")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 async def analyze_ticket(issue_key: str, ctx: Context = None) -> str:
     """Analyze a JIRA ticket with AI and preview suggested enrichments. Does NOT modify JIRA.
 
@@ -270,6 +292,40 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _configure_auth(settings: Settings) -> None:
+    """Configure OAuth token verification if Cognito settings are provided."""
+    if not settings.auth_enabled:
+        logger.info("auth_disabled", hint="Set GIGA_COGNITO_USER_POOL_ID to enable OAuth")
+        return
+
+    from mcp.server.auth.settings import AuthSettings
+
+    from giga_mcp_server.auth import CognitoTokenVerifier
+
+    verifier = CognitoTokenVerifier(
+        user_pool_id=settings.cognito_user_pool_id,
+        region=settings.cognito_region,
+        client_id=settings.cognito_client_id or None,
+    )
+
+    issuer_url = (
+        f"https://cognito-idp.{settings.cognito_region}.amazonaws.com"
+        f"/{settings.cognito_user_pool_id}"
+    )
+
+    mcp._token_verifier = verifier
+    mcp.settings.auth = AuthSettings(
+        issuer_url=issuer_url,
+        resource_server_url=settings.public_url or f"https://{settings.host}:{settings.port}",
+    )
+
+    logger.info(
+        "auth_enabled",
+        user_pool_id=settings.cognito_user_pool_id,
+        region=settings.cognito_region,
+    )
+
+
 def main() -> None:
     import os as _os
 
@@ -287,6 +343,7 @@ def main() -> None:
     if settings.transport == "streamable-http":
         mcp.settings.host = settings.host
         mcp.settings.port = settings.port
+        _configure_auth(settings)
         mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
