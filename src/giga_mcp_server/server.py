@@ -232,17 +232,23 @@ async def get_ticket(issue_key: str, ctx: Context = None) -> str:
 
 @mcp.tool()
 async def list_backlog(
-    limit: int = 20, unprocessed_only: bool = True, ctx: Context = None
+    limit: int = 20,
+    status: str = "To Do",
+    unprocessed_only: bool = True,
+    ctx: Context = None,
 ) -> str:
-    """List tickets in the project backlog.
+    """List tickets in the project, filtered by status.
 
     Args:
         limit: Maximum number of tickets to return.
+        status: JIRA status to filter by (e.g. 'To Do', 'In Progress', 'Done'). Use 'All' to show all statuses.
         unprocessed_only: If true, only show tickets without the ai-processed label.
     """
     app = _app(ctx)
     s = app.settings
-    jql = f'project = "{s.jira_project_key}" AND status = "{s.jira_intake_status}"'
+    jql = f'project = "{s.jira_project_key}"'
+    if status.lower() != "all":
+        jql += f' AND status = "{status}"'
     if unprocessed_only:
         jql += f' AND labels not in ("{s.jira_processed_label}")'
     jql += " ORDER BY created DESC"
