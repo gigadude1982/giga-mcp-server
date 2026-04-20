@@ -101,6 +101,22 @@ def _app(ctx: Context) -> AppContext:
 
 
 @mcp.tool()
+async def get_server_info(ctx: Context = None) -> str:
+    """Return server name, version, and runtime configuration."""
+    app = _app(ctx)
+    s = app.settings
+    lines = [
+        "**Name:** giga-mcp-server",
+        f"**Version:** {_VERSION}",
+        f"**Transport:** {s.transport}",
+        f"**JIRA Project:** {s.jira_project_key}",
+        f"**AI Model:** {s.anthropic_model}",
+        f"**Auth:** {'enabled' if s.auth_enabled else 'disabled'}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
 async def create_story(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
     """Create a JIRA ticket from a natural language description. AI structures it into a proper story with priority, labels, and acceptance criteria.
 
