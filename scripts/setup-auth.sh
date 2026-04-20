@@ -132,8 +132,8 @@ else
     POOL_ID=$(aws cognito-idp create-user-pool \
         --pool-name "$POOL_NAME" \
         --auto-verified-attributes email \
-        --admin-create-user-config '{"AllowAdminCreateUserOnly": true}' \
-        --password-policy '{"MinimumLength":12,"RequireUppercase":true,"RequireLowercase":true,"RequireNumbers":true,"RequireSymbols":false}' \
+        --admin-create-user-config AllowAdminCreateUserOnly=true \
+        --policies 'PasswordPolicy={MinimumLength=12,RequireUppercase=true,RequireLowercase=true,RequireNumbers=true,RequireSymbols=false}' \
         --region "$AWS_REGION" \
         --query 'UserPool.Id' --output text)
     echo "Created user pool: $POOL_ID"
