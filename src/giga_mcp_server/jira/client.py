@@ -126,3 +126,100 @@ class JiraClient:
         except Exception:
             logger.exception("transition_error", issue_key=issue_key)
             return False
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_issue(self, issue_key: str) -> dict[str, Any]:
+        """Fetch full details for a single JIRA issue."""
+        raw = await asyncio.to_thread(self._jira.issue, issue_key)
+        fields = raw.get("fields", {})
+        subtasks = [
+            {"key": s["key"], "summary": s["fields"]["summary"]}
+            for s in fields.get("subtasks", [])
+        ]
+        return {
+            "key": raw["key"],
+            "summary": fields.get("summary", ""),
+            "description": fields.get("description") or "",
+            "status": fields.get("status", {}).get("name", ""),
+            "priority": fields.get("priority", {}).get("name", ""),
+            "issue_type": fields.get("issuetype", {}).get("name", ""),
+            "labels": fields.get("labels", []),
+            "components": [c["name"] for c in fields.get("components", [])],
+            "created": fields.get("created", ""),
+            "updated": fields.get("updated", ""),
+            "assignee": (fields.get("assignee") or {}).get("displayName", ""),
+            "reporter": (fields.get("reporter") or {}).get("displayName", ""),
+            "subtasks": subtasks,
+            "parent": (fields.get("parent") or {}).get("key", ""),
+            "url": f"{self._settings.jira_url}/browse/{raw['key']}",
+        }
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def update_issue(self, issue_key: str, fields: dict[str, Any]) -> bool:
+        """Update fields on an existing JIRA issue."""
+        try:
+            logger.info("updating_issue", issue_key=issue_key, fields=list(fields.keys()))
+            await asyncio.to_thread(self._jira.update_issue_field, issue_key, fields)
+            return True
+        except Exception:
+            logger.exception("update_issue_error", issue_key=issue_key)
+            return False
+
+    @async_retry(max_attempts=3, base_delay=2.0)
+    async def create_subtask(
+        self,
+        parent_key: str,
+        summary: str,
+        description: str = "",
+    ) -> IdeaResult:
+        """Create a subtask linked to a parent issue."""
+        fields: dict[str, Any] = {
+            "project": {"key": self._settings.jira_project_key},
+            "parent": {"key": parent_key},
+            "summary": summary,
+            "description": description,
+            "issuetype": {"name": "Sub-task"},
+        }
+        logger.info("creating_subtask", parent=parent_key, summary=summary)
+        result = await asyncio.to_thread(self._jira.create_issue, fields=fields)
+        issue_key = result["key"]
+        return IdeaResult(
+            jira_key=issue_key,
+            jira_url=f"{self._settings.jira_url}/browse/{issue_key}",
+            summary=summary,
+            status=self._settings.jira_intake_status,
+        )
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def search_issues_full(
+        self, jql: str, max_results: int = 20
+    ) -> list[dict[str, Any]]:
+        """Search JIRA issues using JQL, returning full details."""
+        results = await asyncio.to_thread(
+            self._jira.jql,
+            jql,
+            limit=max_results,
+            fields="summary,status,priority,created,description,labels,issuetype,components,subtasks",
+        )
+        issues = []
+        for issue in results.get("issues", []):
+            f = issue["fields"]
+            issues.append(
+                {
+                    "key": issue["key"],
+                    "summary": f.get("summary", ""),
+                    "description": f.get("description") or "",
+                    "status": f.get("status", {}).get("name", ""),
+                    "priority": f.get("priority", {}).get("name", ""),
+                    "issue_type": f.get("issuetype", {}).get("name", ""),
+                    "labels": f.get("labels", []),
+                    "components": [c["name"] for c in f.get("components", [])],
+                    "created": f.get("created", ""),
+                    "subtasks": [
+                        {"key": s["key"], "summary": s["fields"]["summary"]}
+                        for s in f.get("subtasks", [])
+                    ],
+                    "url": f"{self._settings.jira_url}/browse/{issue['key']}",
+                }
+            )
+        return issues

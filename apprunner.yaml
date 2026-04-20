@@ -1,0 +1,23 @@
+version: 1.0
+runtime: python312
+build:
+  commands:
+    build:
+      - pip install .
+run:
+  command: giga-mcp-server
+  network:
+    port: 8000
+  env:
+    - name: GIGA_TRANSPORT
+      value: "streamable-http"
+    - name: GIGA_HOST
+      value: "0.0.0.0"
+    - name: GIGA_PORT
+      value: "8000"
+  secrets:
+    - name: GIGA_JIRA_URL
+    - name: GIGA_JIRA_USERNAME
+    - name: GIGA_JIRA_API_TOKEN
+    - name: GIGA_JIRA_PROJECT_KEY
+    - name: GIGA_ANTHROPIC_API_KEY

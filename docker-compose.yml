@@ -2,16 +2,6 @@ services:
   giga-mcp:
     build: .
     ports:
-      - "8000:8000"   # MCP Streamable HTTP
-      - "8080:8080"   # WhatsApp bridge (for QR code auth)
-    volumes:
-      - whatsapp-store:/app/store
+      - "8000:8000"
     env_file: .env
-    environment:
-      - GIGA_TRANSPORT=streamable-http
-      - GIGA_WHATSAPP_DB_PATH=/app/store/messages.db
-      - GIGA_WHATSAPP_BRIDGE_URL=http://localhost:8080
     restart: unless-stopped
-
-volumes:
-  whatsapp-store:

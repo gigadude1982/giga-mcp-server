@@ -1,7 +1,7 @@
 """Mock clients for MCP Inspector / dry-run mode.
 
 Returns plausible fake data so all tools can be exercised without
-real WhatsApp or JIRA credentials.
+real JIRA or Anthropic credentials.
 """
 
 from __future__ import annotations
@@ -10,48 +10,30 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from giga_mcp_server.models import IdeaResult, ParsedIdea, WhatsAppMessage
+from giga_mcp_server.config import Settings
+from giga_mcp_server.models import (
+    EnrichmentResult,
+    IdeaResult,
+    ParsedIdea,
+    SubtaskSuggestion,
+    TicketAnalysis,
+)
 
-
-_FAKE_MESSAGES = [
-    ("Build a dashboard for tracking user signups #frontend", "+15551234567"),
-    ("urgent: fix login crash on Android", "+15559876543"),
-    ("Add dark mode to the settings page #design #frontend", "+15551112222"),
-    ("task: update API docs for v2 endpoints", "+15553334444"),
+_FAKE_TICKETS = [
+    ("Build a dashboard for tracking user signups", "Story", "Medium"),
+    ("Fix login crash on Android", "Bug", "High"),
+    ("Add dark mode to the settings page", "Story", "Low"),
+    ("Update API docs for v2 endpoints", "Task", "Medium"),
 ]
 
 _ISSUE_COUNTER = 100
 
 
-class MockWhatsAppClient:
-    """Returns fake WhatsApp messages for inspector testing."""
-
-    async def get_new_messages(
-        self, since: datetime, chat_jid: str | None = None
-    ) -> list[WhatsAppMessage]:
-        now = datetime.now(timezone.utc)
-        messages = []
-        for i, (content, sender) in enumerate(_FAKE_MESSAGES):
-            messages.append(
-                WhatsAppMessage(
-                    id=f"mock-{i}",
-                    chat_jid=chat_jid or "mock-group@g.us",
-                    sender=sender,
-                    content=content,
-                    timestamp=now - timedelta(minutes=30 - i * 5),
-                    is_from_me=False,
-                )
-            )
-        return messages
-
-    async def send_message(self, jid: str, text: str) -> bool:
-        return True
-
-
 class MockJiraClient:
     """Returns fake JIRA responses for inspector testing."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         self._counter = _ISSUE_COUNTER
 
     async def create_story(self, idea: ParsedIdea) -> IdeaResult:
@@ -68,34 +50,132 @@ class MockJiraClient:
         return [
             {
                 "key": f"DEMO-{i}",
-                "summary": msg,
+                "summary": summary,
                 "status": "To Do",
-                "priority": random.choice(["High", "Medium", "Low"]),
-                "created": (
-                    datetime.now(timezone.utc) - timedelta(hours=i)
-                ).isoformat(),
+                "priority": priority,
+                "created": (datetime.now(timezone.utc) - timedelta(hours=i)).isoformat(),
                 "url": f"https://demo.atlassian.net/browse/DEMO-{i}",
             }
-            for i, (msg, _) in enumerate(_FAKE_MESSAGES, start=1)
+            for i, (summary, _, priority) in enumerate(_FAKE_TICKETS, start=1)
         ]
+
+    async def search_issues_full(
+        self, jql: str, max_results: int = 20
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "key": f"DEMO-{i}",
+                "summary": summary,
+                "description": f"Details for: {summary}",
+                "status": "To Do",
+                "priority": priority,
+                "issue_type": issue_type,
+                "labels": [],
+                "components": [],
+                "created": (datetime.now(timezone.utc) - timedelta(hours=i)).isoformat(),
+                "subtasks": [],
+                "url": f"https://demo.atlassian.net/browse/DEMO-{i}",
+            }
+            for i, (summary, issue_type, priority) in enumerate(_FAKE_TICKETS, start=1)
+        ]
+
+    async def get_issue(self, issue_key: str) -> dict[str, Any]:
+        idx = random.randint(0, len(_FAKE_TICKETS) - 1)
+        summary, issue_type, priority = _FAKE_TICKETS[idx]
+        return {
+            "key": issue_key,
+            "summary": summary,
+            "description": f"Details for: {summary}",
+            "status": "To Do",
+            "priority": priority,
+            "issue_type": issue_type,
+            "labels": [],
+            "components": [],
+            "created": datetime.now(timezone.utc).isoformat(),
+            "updated": datetime.now(timezone.utc).isoformat(),
+            "assignee": "",
+            "reporter": "Mock User",
+            "subtasks": [],
+            "parent": "",
+            "url": f"https://demo.atlassian.net/browse/{issue_key}",
+        }
+
+    async def update_issue(self, issue_key: str, fields: dict[str, Any]) -> bool:
+        return True
+
+    async def create_subtask(
+        self, parent_key: str, summary: str, description: str = ""
+    ) -> IdeaResult:
+        self._counter += 1
+        key = f"DEMO-{self._counter}"
+        return IdeaResult(
+            jira_key=key,
+            jira_url=f"https://demo.atlassian.net/browse/{key}",
+            summary=summary,
+            status="To Do",
+        )
+
+    async def add_comment(self, issue_key: str, body: str) -> bool:
+        return True
 
     async def transition_issue(self, issue_key: str, status: str) -> bool:
         return True
 
 
-class MockPoller:
-    """No-op poller for inspect mode."""
+class MockTicketEnricher:
+    """Returns fake enrichment results for inspector testing."""
 
-    @property
-    def stats(self) -> dict:
-        return {
-            "last_poll_time": None,
-            "last_seen_timestamp": datetime.now(timezone.utc).isoformat(),
-            "processed_count": 0,
-            "error_count": 0,
-            "group_jid": "mock-group@g.us",
-            "poll_interval_seconds": 10,
-        }
+    def __init__(self, jira_client: MockJiraClient, settings: Settings) -> None:
+        self._jira = jira_client
+        self._settings = settings
 
-    async def run(self) -> None:
-        pass  # No-op — never polls
+    async def analyze_ticket(self, issue_key: str) -> TicketAnalysis:
+        return TicketAnalysis(
+            issue_key=issue_key,
+            suggested_priority="High",
+            suggested_type="Story",
+            suggested_labels=["frontend", "dashboard"],
+            acceptance_criteria=[
+                "Given a logged-in user, When they navigate to /dashboard, Then they see signup metrics",
+                "Given the dashboard, When data is loading, Then a skeleton loader is shown",
+            ],
+            enriched_description="Build a dashboard for tracking user signups.\n\n"
+            "This feature should provide real-time visibility into signup metrics.",
+            should_split=True,
+            subtask_suggestions=[
+                SubtaskSuggestion(
+                    summary="Design dashboard wireframes",
+                    description="Create wireframes for the signup tracking dashboard.",
+                ),
+                SubtaskSuggestion(
+                    summary="Implement API endpoint for signup data",
+                    description="Create GET /api/signups endpoint with date range filtering.",
+                ),
+            ],
+            confidence=0.87,
+            reasoning="The ticket describes a new feature with multiple components. "
+            "Splitting into design and implementation subtasks for better tracking.",
+        )
+
+    async def enrich_ticket(
+        self, issue_key: str, analysis: TicketAnalysis | None = None
+    ) -> EnrichmentResult:
+        return EnrichmentResult(
+            issue_key=issue_key,
+            fields_updated=["description", "priority", "labels"],
+            subtasks_created=["DEMO-101", "DEMO-102"],
+            comment_added=True,
+        )
+
+    async def find_duplicates(self, issue_key: str) -> list[tuple[str, float]]:
+        return [("DEMO-3", 0.92)]
+
+    async def process_backlog(self, limit: int = 10) -> list[EnrichmentResult]:
+        return [
+            EnrichmentResult(
+                issue_key=f"DEMO-{i}",
+                fields_updated=["description", "priority", "labels"],
+                comment_added=True,
+            )
+            for i in range(1, min(limit, 4) + 1)
+        ]

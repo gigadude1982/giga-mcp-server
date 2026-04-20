@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -11,16 +10,11 @@ import structlog
 from mcp.server.fastmcp import Context, FastMCP
 
 from giga_mcp_server.config import Settings
+from giga_mcp_server.enrichment import TicketEnricher
 from giga_mcp_server.jira.client import JiraClient
-from giga_mcp_server.models import WhatsAppMessage
-from giga_mcp_server.parser.base import MessageParser
-from giga_mcp_server.parser.rule_based import RuleBasedParser
-from giga_mcp_server.pipeline import IdeaPipeline
-from giga_mcp_server.whatsapp.client import WhatsAppClient
-from giga_mcp_server.whatsapp.poller import Poller
+
 
 def _configure_logging(log_file: str | None) -> None:
-    """Set up structlog to write to stderr and optionally a file."""
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if log_file:
         handlers.append(logging.FileHandler(log_file))
@@ -49,46 +43,22 @@ logger = structlog.get_logger()
 
 @dataclass
 class AppContext:
-    pipeline: IdeaPipeline
-    wa_client: WhatsAppClient
     jira_client: JiraClient
-    poller: Poller
+    enricher: TicketEnricher
     settings: Settings
-
-
-def _get_parser(settings: Settings) -> MessageParser:
-    if settings.parser_type == "llm":
-        from giga_mcp_server.parser.llm_parser import LLMParser
-
-        return LLMParser(api_key=settings.anthropic_api_key)
-    return RuleBasedParser()
 
 
 @asynccontextmanager
 async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Lifespan for MCP Inspector: real JIRA client, mocked WhatsApp/poller."""
-    from giga_mcp_server.inspect_stubs import MockPoller, MockWhatsAppClient
+    """Lifespan for MCP Inspector: mock clients for dry-run testing."""
+    from giga_mcp_server.inspect_stubs import MockJiraClient, MockTicketEnricher
 
     settings = Settings()
-    if not all([settings.jira_url, settings.jira_username, settings.jira_api_token]):
-        raise ValueError(
-            "JIRA credentials required in .env for inspect mode "
-            "(GIGA_JIRA_URL, GIGA_JIRA_USERNAME, GIGA_JIRA_API_TOKEN)"
-        )
-    wa_client = MockWhatsAppClient()
-    jira_client = JiraClient(settings)
-    parser = _get_parser(settings)
-    pipeline = IdeaPipeline(wa_client, jira_client, parser, settings)  # type: ignore[arg-type]
-    poller = MockPoller()
+    jira_client = MockJiraClient(settings)
+    enricher = MockTicketEnricher(jira_client, settings)
 
     logger.info("server_started", transport=settings.transport, mode="inspect")
-    yield AppContext(
-        pipeline=pipeline,
-        wa_client=wa_client,  # type: ignore[arg-type]
-        jira_client=jira_client,
-        poller=poller,  # type: ignore[arg-type]
-        settings=settings,
-    )
+    yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
     logger.info("server_stopped")
 
 
@@ -97,38 +67,12 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     settings = Settings()
     settings.validate_required()
 
-    wa_client = WhatsAppClient(
-        db_path=settings.whatsapp_db_path,
-        bridge_url=settings.whatsapp_bridge_url,
-    )
     jira_client = JiraClient(settings)
-    parser = _get_parser(settings)
-    pipeline = IdeaPipeline(wa_client, jira_client, parser, settings)
-    poller = Poller(
-        wa_client=wa_client,
-        pipeline=pipeline,
-        group_jid=settings.whatsapp_group_jid,
-        poll_interval=settings.whatsapp_poll_interval_seconds,
-    )
+    enricher = TicketEnricher(jira_client, settings)
 
-    poll_task = asyncio.create_task(poller.run())
     logger.info("server_started", transport=settings.transport)
-
-    try:
-        yield AppContext(
-            pipeline=pipeline,
-            wa_client=wa_client,
-            jira_client=jira_client,
-            poller=poller,
-            settings=settings,
-        )
-    finally:
-        poll_task.cancel()
-        try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("server_stopped")
+    yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
+    logger.info("server_stopped")
 
 
 @asynccontextmanager
@@ -140,7 +84,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         yield ctx
 
 
-mcp = FastMCP("giga-mcp-server", lifespan=lifespan)
+mcp = FastMCP("giga-mcp-server", lifespan=lifespan, host="0.0.0.0", port=8000)
 
 
 # ---------------------------------------------------------------------------
@@ -149,50 +93,137 @@ mcp = FastMCP("giga-mcp-server", lifespan=lifespan)
 
 
 def _app(ctx: Context) -> AppContext:
-    """Extract our AppContext from the MCP request context."""
     return ctx.request_context.lifespan_context
 
 
 @mcp.tool()
-async def process_message(message: str, sender: str = "unknown", ctx: Context = None) -> str:
-    """Manually process a message through the pipeline: parse it and create a JIRA story.
+async def analyze_ticket(issue_key: str, ctx: Context = None) -> str:
+    """Analyze a JIRA ticket with AI and preview suggested enrichments. Does NOT modify JIRA.
 
     Args:
-        message: The idea or thought to create a JIRA story from.
-        sender: Who submitted this idea.
+        issue_key: The JIRA issue key, e.g. PIT-42.
     """
-    from datetime import datetime, timezone
-
     app = _app(ctx)
-    msg = WhatsAppMessage(
-        id="manual",
-        chat_jid="manual",
-        sender=sender,
-        content=message,
-        timestamp=datetime.now(timezone.utc),
-        is_from_me=False,
-    )
-    result = await app.pipeline.process_message(msg)
-    return f"Created {result.jira_key}: {result.summary}\n{result.jira_url}"
+    analysis = await app.enricher.analyze_ticket(issue_key)
+
+    lines = [
+        f"## Analysis for {analysis.issue_key}",
+        f"**Priority:** {analysis.suggested_priority}",
+        f"**Type:** {analysis.suggested_type}",
+        f"**Labels:** {', '.join(analysis.suggested_labels) or 'none'}",
+        f"**Should split:** {'Yes' if analysis.should_split else 'No'}",
+        f"**Duplicate of:** {analysis.duplicate_of or 'none'}",
+        f"**Confidence:** {analysis.confidence:.0%}",
+        "",
+        "### Acceptance Criteria",
+    ]
+    for ac in analysis.acceptance_criteria:
+        lines.append(f"- {ac}")
+
+    if analysis.subtask_suggestions:
+        lines.append("")
+        lines.append("### Suggested Subtasks")
+        for sub in analysis.subtask_suggestions:
+            lines.append(f"- **{sub.summary}**: {sub.description}")
+
+    lines.append("")
+    lines.append(f"### Reasoning\n{analysis.reasoning}")
+    return "\n".join(lines)
 
 
 @mcp.tool()
-async def list_pending_ideas(limit: int = 20, ctx: Context = None) -> str:
-    """List recent ideas in the JIRA intake/backlog column awaiting review.
+async def enrich_ticket(issue_key: str, ctx: Context = None) -> str:
+    """Analyze and apply AI enrichment to a single JIRA ticket. Updates fields, creates subtasks, flags duplicates.
 
     Args:
-        limit: Maximum number of ideas to return.
+        issue_key: The JIRA issue key, e.g. PIT-42.
+    """
+    app = _app(ctx)
+    result = await app.enricher.enrich_ticket(issue_key)
+
+    lines = [f"## Enrichment Result for {result.issue_key}"]
+    if result.duplicate_of:
+        lines.append(f"Flagged as possible duplicate of **{result.duplicate_of}**.")
+    else:
+        if result.fields_updated:
+            lines.append(f"**Fields updated:** {', '.join(result.fields_updated)}")
+        if result.subtasks_created:
+            lines.append(f"**Subtasks created:** {', '.join(result.subtasks_created)}")
+    lines.append(f"**Comment added:** {'Yes' if result.comment_added else 'No'}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def process_backlog(limit: int = 10, ctx: Context = None) -> str:
+    """Batch-enrich unprocessed tickets in the backlog.
+
+    Args:
+        limit: Maximum number of tickets to process.
+    """
+    app = _app(ctx)
+    results = await app.enricher.process_backlog(limit=limit)
+
+    if not results:
+        return "No unprocessed tickets found in the backlog."
+
+    lines = [f"## Processed {len(results)} ticket(s)"]
+    for r in results:
+        status = f"duplicate of {r.duplicate_of}" if r.duplicate_of else "enriched"
+        fields = f" ({', '.join(r.fields_updated)})" if r.fields_updated else ""
+        subtasks = f" +{len(r.subtasks_created)} subtasks" if r.subtasks_created else ""
+        lines.append(f"- **{r.issue_key}**: {status}{fields}{subtasks}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def get_ticket(issue_key: str, ctx: Context = None) -> str:
+    """Fetch and display full details of a JIRA ticket.
+
+    Args:
+        issue_key: The JIRA issue key, e.g. PIT-42.
+    """
+    app = _app(ctx)
+    t = await app.jira_client.get_issue(issue_key)
+
+    lines = [
+        f"## {t['key']}: {t['summary']}",
+        f"**Status:** {t['status']}  |  **Priority:** {t['priority']}  |  **Type:** {t['issue_type']}",
+        f"**Labels:** {', '.join(t['labels']) or 'none'}",
+        f"**Reporter:** {t['reporter']}  |  **Assignee:** {t['assignee'] or 'unassigned'}",
+        f"**Created:** {t['created']}  |  **Updated:** {t['updated']}",
+        f"**URL:** {t['url']}",
+    ]
+    if t["parent"]:
+        lines.append(f"**Parent:** {t['parent']}")
+    if t["subtasks"]:
+        lines.append("\n### Subtasks")
+        for s in t["subtasks"]:
+            lines.append(f"- {s['key']}: {s['summary']}")
+    if t["description"]:
+        lines.append(f"\n### Description\n{t['description']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def list_backlog(
+    limit: int = 20, unprocessed_only: bool = True, ctx: Context = None
+) -> str:
+    """List tickets in the project backlog.
+
+    Args:
+        limit: Maximum number of tickets to return.
+        unprocessed_only: If true, only show tickets without the ai-processed label.
     """
     app = _app(ctx)
     s = app.settings
-    jql = (
-        f'project = "{s.jira_project_key}" '
-        f'AND status = "{s.jira_intake_status}" '
-        f"ORDER BY created DESC"
-    )
+    jql = f'project = "{s.jira_project_key}" AND status = "{s.jira_intake_status}"'
+    if unprocessed_only:
+        jql += f' AND labels not in ("{s.jira_processed_label}")'
+    jql += " ORDER BY created DESC"
+
     issues = await app.jira_client.search_issues(jql, max_results=limit)
     if not issues:
-        return "No pending ideas found."
+        return "No tickets found."
 
     lines = []
     for i in issues:
@@ -201,58 +232,36 @@ async def list_pending_ideas(limit: int = 20, ctx: Context = None) -> str:
 
 
 @mcp.tool()
-async def get_group_messages(since_minutes: int = 60, ctx: Context = None) -> str:
-    """Fetch recent messages from the configured WhatsApp group.
+async def update_ticket_status(issue_key: str, status: str, ctx: Context = None) -> str:
+    """Transition a JIRA ticket to a new status (e.g., 'In Progress', 'Done').
 
     Args:
-        since_minutes: How many minutes back to look.
-    """
-    from datetime import datetime, timedelta, timezone
-
-    app = _app(ctx)
-    since = datetime.now(timezone.utc) - timedelta(minutes=since_minutes)
-    messages = await app.wa_client.get_new_messages(
-        since=since,
-        chat_jid=app.settings.whatsapp_group_jid,
-    )
-    if not messages:
-        return f"No messages in the last {since_minutes} minutes."
-
-    lines = []
-    for m in messages:
-        direction = "→" if m.is_from_me else "←"
-        lines.append(f"{direction} [{m.timestamp:%H:%M}] {m.sender}: {m.content}")
-    return "\n".join(lines)
-
-
-@mcp.tool()
-async def update_idea_status(jira_key: str, status: str, ctx: Context = None) -> str:
-    """Transition a JIRA idea/story to a new status (e.g., 'In Progress', 'Done').
-
-    Args:
-        jira_key: The JIRA issue key, e.g. PROJ-123.
+        issue_key: The JIRA issue key, e.g. PIT-42.
         status: The target status name.
     """
     app = _app(ctx)
-    success = await app.jira_client.transition_issue(jira_key, status)
+    success = await app.jira_client.transition_issue(issue_key, status)
     if success:
-        return f"Moved {jira_key} to '{status}'."
-    return f"Failed to transition {jira_key} to '{status}'. Check available transitions."
+        return f"Moved {issue_key} to '{status}'."
+    return f"Failed to transition {issue_key} to '{status}'. Check available transitions."
 
 
 @mcp.tool()
-async def get_pipeline_status(ctx: Context = None) -> str:
-    """Get the health status of the WhatsApp polling pipeline."""
+async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
+    """Check a JIRA ticket against recent issues for potential duplicates.
+
+    Args:
+        issue_key: The JIRA issue key to check, e.g. PIT-42.
+    """
     app = _app(ctx)
-    stats = app.poller.stats
-    lines = [
-        f"Poll interval: {stats['poll_interval_seconds']}s",
-        f"Group JID: {stats['group_jid']}",
-        f"Last poll: {stats['last_poll_time'] or 'never'}",
-        f"Watermark: {stats['last_seen_timestamp']}",
-        f"Messages processed: {stats['processed_count']}",
-        f"Errors: {stats['error_count']}",
-    ]
+    matches = await app.enricher.find_duplicates(issue_key)
+
+    if not matches:
+        return f"No duplicates found for {issue_key}."
+
+    lines = [f"## Potential duplicates of {issue_key}"]
+    for key, ratio in matches:
+        lines.append(f"- **{key}**: {ratio:.0%} similarity")
     return "\n".join(lines)
 
 
@@ -271,12 +280,14 @@ def main() -> None:
     _configure_logging(settings.log_file)
 
     if settings.inspect:
-        logger.info("inspect_mode", hint="Running with mock clients — no real services needed")
+        logger.info("inspect_mode", hint="Running with mock clients")
     if settings.log_file:
         logger.info("logging_to_file", path=settings.log_file)
 
     if settings.transport == "streamable-http":
-        mcp.run(transport="streamable-http", host=settings.host, port=settings.port)
+        mcp.settings.host = settings.host
+        mcp.settings.port = settings.port
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
 
