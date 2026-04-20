@@ -1,26 +1,32 @@
 # giga-mcp-server
 
-An MCP server that bridges WhatsApp group messages to JIRA Kanban board stories. Send an idea to a WhatsApp group, get a JIRA ticket created automatically.
+An MCP server that uses AI agents to enrich and process JIRA tickets. Point it at a JIRA project and it will analyze tickets, suggest priorities and labels, generate acceptance criteria, detect duplicates, and break epics into subtasks — all powered by Claude.
 
 ## How it works
 
 ```
-WhatsApp Group  ──>  giga-mcp-server  ──>  JIRA Kanban Board
-     ^                                           |
-     └───────── confirmation message ────────────┘
+Human creates ticket  ──>  giga-mcp-server  ──>  Enriched JIRA ticket
+                            (Claude AI)           - Priority & labels set
+                                                  - Acceptance criteria added
+                                                  - Subtasks created
+                                                  - Duplicates flagged
 ```
 
-1. A human sends an idea or thought to a designated WhatsApp group
-2. The server polls/reads new messages from the `whatsapp-mcp` SQLite store
-3. Messages are parsed into structured JIRA fields (summary, priority, labels, issue type)
-4. A story is created on the configured JIRA Kanban board
-5. A confirmation with the ticket link is sent back to the WhatsApp group via the WhatsApp bridge
+1. A human creates a rough JIRA ticket (or describes one in natural language)
+2. The server analyzes the ticket using Claude Haiku
+3. AI enriches the ticket: sets priority, labels, issue type, and writes acceptance criteria
+4. Large tickets are split into subtasks automatically
+5. Duplicate detection flags similar existing issues
 
 ## Features
 
-- **Dual parser**: Rule-based keyword extraction (default) or LLM-powered parsing via Claude Haiku
-- **Deduplication**: Fuzzy-matches new ideas against recent issues to avoid duplicates
+- **AI ticket creation**: Describe a feature or bug in plain English, get a structured JIRA story
+- **AI enrichment**: Analyzes existing tickets and updates priority, labels, description, and acceptance criteria
+- **Batch processing**: Enrich all unprocessed backlog tickets in one call
+- **Duplicate detection**: Fuzzy-matches tickets against recent issues to flag duplicates
+- **Subtask generation**: Automatically splits large tickets into actionable subtasks
 - **Retry logic**: Exponential backoff on JIRA API calls
+- **OAuth support**: Optional Cognito JWT authentication for streamable-http transport
 - **MCP Inspector support**: `--inspect` mode with mock clients for development
 - **File logging**: Optional log file output via `GIGA_LOG_FILE`
 - **Cloud-ready**: Supports stdio and streamable-http transports
@@ -29,17 +35,20 @@ WhatsApp Group  ──>  giga-mcp-server  ──>  JIRA Kanban Board
 
 | Tool | Description |
 |------|-------------|
-| `process_message` | Manually create a JIRA story from text |
-| `list_pending_ideas` | Query the intake/backlog column |
-| `get_group_messages` | View recent WhatsApp group messages |
-| `update_idea_status` | Transition a JIRA issue to a new status |
-| `get_pipeline_status` | Health check (poll times, counts, errors) |
+| `create_story` | Create a JIRA ticket from a natural language description |
+| `analyze_ticket` | AI-analyze a ticket and preview suggested enrichments (read-only) |
+| `enrich_ticket` | Analyze and apply AI enrichment to a JIRA ticket |
+| `process_backlog` | Batch-enrich unprocessed tickets in the backlog |
+| `get_ticket` | Fetch and display full details of a JIRA ticket |
+| `list_backlog` | List tickets in the project backlog |
+| `update_ticket_status` | Transition a JIRA ticket to a new status |
+| `find_duplicates` | Check a ticket against recent issues for duplicates |
 
 ## Prerequisites
 
 - Python 3.11+
-- [whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) Go bridge running locally
 - Atlassian Cloud account with an [API token](https://id.atlassian.com/manage-profile/security/api-tokens)
+- Anthropic API key for Claude
 
 ## Setup
 
@@ -49,13 +58,7 @@ git clone git@github.com:gigadude1982/giga-mcp-server.git
 cd giga-mcp-server
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Development install
 pip install -e ".[dev]"
-
-# Development install with LLM parser support
-# (use this instead of the command above if you want LLM features)
-pip install -e ".[dev,llm]"
 ```
 
 ## Configuration
@@ -70,15 +73,17 @@ Key settings:
 
 | Variable | Description |
 |----------|-------------|
-| `GIGA_WHATSAPP_GROUP_JID` | Target WhatsApp group JID (ends with `@g.us`) |
 | `GIGA_JIRA_URL` | Atlassian instance URL |
 | `GIGA_JIRA_USERNAME` | Atlassian account email |
 | `GIGA_JIRA_API_TOKEN` | Atlassian API token |
-| `GIGA_JIRA_PROJECT_KEY` | JIRA project key (e.g., `PROJ`) |
-| `GIGA_PARSER_TYPE` | `rule_based` (default) or `llm` |
-| `GIGA_ANTHROPIC_API_KEY` | Required if `GIGA_PARSER_TYPE=llm` |
-| `GIGA_LOG_FILE` | Optional path for file logging |
+| `GIGA_JIRA_PROJECT_KEY` | JIRA project key (e.g., `PIT`) |
+| `GIGA_ANTHROPIC_API_KEY` | Anthropic API key for Claude |
 | `GIGA_TRANSPORT` | `stdio` (default) or `streamable-http` |
+| `GIGA_LOG_FILE` | Optional path for file logging |
+| `GIGA_COGNITO_USER_POOL_ID` | Optional: enables OAuth (Cognito JWT verification) |
+| `GIGA_COGNITO_REGION` | Cognito region (default: `us-east-1`) |
+| `GIGA_COGNITO_CLIENT_ID` | Optional: restrict to a specific Cognito app client |
+| `GIGA_PUBLIC_URL` | Public URL for OAuth resource metadata |
 
 See [.env.example](.env.example) for all options.
 
@@ -112,11 +117,11 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "giga-mcp-server": {
       "command": "/path/to/giga-mcp-server/.venv/bin/giga-mcp-server",
       "env": {
-        "GIGA_WHATSAPP_GROUP_JID": "your-group@g.us",
         "GIGA_JIRA_URL": "https://your-company.atlassian.net",
         "GIGA_JIRA_USERNAME": "you@company.com",
         "GIGA_JIRA_API_TOKEN": "your-token",
-        "GIGA_JIRA_PROJECT_KEY": "PROJ"
+        "GIGA_JIRA_PROJECT_KEY": "PIT",
+        "GIGA_ANTHROPIC_API_KEY": "sk-ant-..."
       }
     }
   }
@@ -129,7 +134,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 docker compose up
 ```
 
-The Docker setup builds the WhatsApp Go bridge and Python server into a single container. WhatsApp session data is persisted via a Docker volume.
+## Deployment
+
+The server deploys to AWS App Runner via GitHub Actions. Pushing to `main` triggers:
+
+1. Lint + test (`ruff check` + `pytest`)
+2. Docker image build and push to ECR
+3. App Runner service update
 
 ## Development
 
@@ -150,19 +161,13 @@ pytest tests/ -v && ruff check src/ tests/
 src/giga_mcp_server/
 ├── server.py          # FastMCP server, tool definitions, lifespan
 ├── config.py          # Pydantic settings (env vars)
-├── models.py          # Data models (ParsedIdea, IdeaResult, WhatsAppMessage)
-├── pipeline.py        # Orchestration: parse -> deduplicate -> create -> confirm
+├── models.py          # Data models (ParsedIdea, TicketAnalysis, EnrichmentResult)
+├── enrichment.py      # AI ticket analysis & enrichment using Claude
+├── auth.py            # Cognito JWT token verifier for OAuth
 ├── retry.py           # async_retry decorator with exponential backoff
 ├── inspect_stubs.py   # Mock clients for --inspect mode
-├── whatsapp/
-│   ├── client.py      # SQLite reader + HTTP sender
-│   └── poller.py      # Background polling loop
-├── jira/
-│   └── client.py      # JIRA API wrapper (atlassian-python-api)
-└── parser/
-    ├── base.py        # Abstract parser interface
-    ├── rule_based.py  # Keyword/regex parser
-    └── llm_parser.py  # Claude Haiku parser
+└── jira/
+    └── client.py      # JIRA API wrapper (atlassian-python-api)
 ```
 
 ## License
