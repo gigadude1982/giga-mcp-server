@@ -3,7 +3,7 @@
 # No credentials required.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 exec npx @modelcontextprotocol/inspector -- \
-    "$SCRIPT_DIR/.venv/bin/python" -m giga_mcp_server.server --inspect
+    "$REPO_DIR/.venv/bin/python" -m giga_mcp_server.server --inspect

@@ -92,7 +92,7 @@ See [.env.example](.env.example) for all options.
 ### Run with MCP Inspector (no credentials needed)
 
 ```bash
-npx @modelcontextprotocol/inspector -- .venv/bin/python -m giga_mcp_server.server --inspect
+scripts/inspect-local.sh
 ```
 
 ### Run in production (stdio)
@@ -141,6 +141,17 @@ The server deploys to AWS App Runner via GitHub Actions. Pushing to `main` trigg
 1. Lint + test (`ruff check` + `pytest`)
 2. Docker image build and push to ECR
 3. App Runner service update
+
+Manual deploy: `scripts/deploy.sh` (first deploy) or `scripts/deploy.sh --update` (redeploy).
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `scripts/inspect-local.sh` | Launch MCP Inspector with local mock server |
+| `scripts/inspect-remote.sh` | Launch MCP Inspector for remote server (Zscaler TLS bypass by default) |
+| `scripts/deploy.sh` | Deploy to App Runner via ECR |
+| `scripts/setup-auth.sh` | Set up Cognito auth (create pool, client, test user, get tokens) |
 
 ## Development
 
