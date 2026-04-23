@@ -92,8 +92,12 @@ class PipelineOrchestrator:
         state.status = "running"
 
         try:
-            config = await load_repo_config(self._github, self._settings.github_repo,
-                                            self._settings.github_base_branch)
+            config = await load_repo_config(
+                self._github,
+                self._settings.github_repo,
+                self._settings.github_base_branch,
+                default_max_retries=self._settings.pipeline_max_retries,
+            )
             await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
         except _HaltError as e:
             state.status = "halted"
@@ -183,8 +187,12 @@ class PipelineOrchestrator:
 
         state.status = "running"
         try:
-            config = await load_repo_config(self._github, self._settings.github_repo,
-                                            self._settings.github_base_branch)
+            config = await load_repo_config(
+                self._github,
+                self._settings.github_repo,
+                self._settings.github_base_branch,
+                default_max_retries=self._settings.pipeline_max_retries,
+            )
             await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"

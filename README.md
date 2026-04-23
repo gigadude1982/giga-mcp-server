@@ -59,6 +59,7 @@ process_ticket(PIT-42, approve_plan=True)
 - **Retry logic**: Per-stage retry with exponential backoff; configurable `GIGA_PIPELINE_MAX_RETRIES`
 - **OAuth support**: Optional Cognito JWT authentication for streamable-http transport
 - **MCP Inspector support**: `--inspect` mode with mock clients for development
+- **File logging**: Set `GIGA_LOG_FILE` to write structured logs to a file alongside stderr
 - **Cloud-ready**: Supports stdio and streamable-http transports
 
 ## MCP Tools

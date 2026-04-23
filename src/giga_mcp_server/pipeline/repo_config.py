@@ -37,8 +37,9 @@ class RepoConfig:
     branch_prefix: str = "auto/"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RepoConfig:
-        merged = {**_DEFAULTS, **data}
+    def from_dict(cls, data: dict[str, Any], default_max_retries: int = 3) -> RepoConfig:
+        defaults = {**_DEFAULTS, "max_retries_per_stage": default_max_retries}
+        merged = {**defaults, **data}
         return cls(
             language=merged["language"],
             test_framework=merged["test_framework"],
@@ -52,17 +53,23 @@ class RepoConfig:
         )
 
     @classmethod
-    def defaults(cls) -> RepoConfig:
-        return cls.from_dict({})
+    def defaults(cls, max_retries: int = 3) -> RepoConfig:
+        return cls.from_dict({}, default_max_retries=max_retries)
 
 
-async def load_repo_config(github_client: Any, repo: str, base_branch: str) -> RepoConfig:
-    """Load .giga-pipeline.json from the repo root. Falls back to defaults."""
+async def load_repo_config(
+    github_client: Any, repo: str, base_branch: str, default_max_retries: int = 3
+) -> RepoConfig:
+    """Load .giga-pipeline.json from the repo root. Falls back to defaults.
+
+    default_max_retries is used as the fallback when the repo config does not
+    specify max_retries_per_stage (maps to GIGA_PIPELINE_MAX_RETRIES).
+    """
     try:
         content = await github_client.get_file(".giga-pipeline.json", base_branch)
         data = json.loads(content)
         logger.info("repo_config_loaded", repo=repo)
-        return RepoConfig.from_dict(data)
+        return RepoConfig.from_dict(data, default_max_retries=default_max_retries)
     except Exception:
         logger.info("repo_config_not_found", repo=repo, hint="using defaults")
-        return RepoConfig.defaults()
+        return RepoConfig.defaults(max_retries=default_max_retries)
