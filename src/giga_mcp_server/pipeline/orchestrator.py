@@ -206,6 +206,10 @@ class PipelineOrchestrator:
         state.branch = branch_name
         logger.info("branch_created", branch=branch_name, ticket=ticket_key)
 
+        # ── Transition Jira → In Progress ────────────────────────────────
+        ok = await transition_ticket(self._jira, ticket_key, "In Progress")
+        logger.info("jira_transition", ticket=ticket_key, status="In Progress", ok=ok)
+
         # ── Stage 3: Implement + Test (parallel) ─────────────────────────
         state.stage = "implementing"
         impl_files = [f for f in plan.get("files_to_modify", [])]
@@ -310,7 +314,8 @@ class PipelineOrchestrator:
         state.pr_number = pr.number
 
         # ── Transition Jira → In Review ──────────────────────────────────
-        await transition_ticket(self._jira, ticket_key, "In Review")
+        ok = await transition_ticket(self._jira, ticket_key, "In Review")
+        logger.info("jira_transition", ticket=ticket_key, status="In Review", ok=ok)
         await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
 
         # ── Poll CI ──────────────────────────────────────────────────────
