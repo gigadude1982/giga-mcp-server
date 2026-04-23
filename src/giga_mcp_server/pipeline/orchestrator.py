@@ -208,10 +208,8 @@ class PipelineOrchestrator:
         max_retries = config.max_retries_per_stage
 
         # ── Create branch ────────────────────────────────────────────────
-        branch_name = f"{config.branch_prefix}{ticket_key.lower()}"
-        await self._github.create_branch(
-            branch_name, from_branch=self._settings.github_base_branch
-        )
+        base_branch_name = f"{config.branch_prefix}{ticket_key.lower()}"
+        branch_name = await self._make_branch(base_branch_name)
         state.branch = branch_name
         logger.info("branch_created", branch=branch_name, ticket=ticket_key)
 
@@ -357,6 +355,19 @@ class PipelineOrchestrator:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _make_branch(self, base_name: str) -> str:
+        """Create a branch, appending a datestamp if the base name already exists."""
+        try:
+            return await self._github.create_branch(
+                base_name, from_branch=self._settings.github_base_branch
+            )
+        except Exception:
+            from datetime import date
+            stamped = f"{base_name}-{date.today().strftime('%Y%m%d')}"
+            return await self._github.create_branch(
+                stamped, from_branch=self._settings.github_base_branch
+            )
 
     async def _run_implementer(
         self,
