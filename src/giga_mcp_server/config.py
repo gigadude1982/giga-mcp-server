@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     cognito_client_id: str = ""
     public_url: str = ""  # e.g. https://mcp.gigacorp.co — used for OAuth resource metadata
 
+    # GitHub — required for autonomous pipeline
+    github_token: str = Field(default="", description="GitHub PAT (repo + workflow scopes)")
+    github_repo: str = Field(default="", description="Target repo in owner/repo format")
+    github_base_branch: str = "main"
+    # TODO: replace with a dedicated GitHub bot account (e.g. giga-bot) once IaC and Auth
+    # are complete. A bot account will show a proper bot badge in GitHub UI. For now, commits
+    # are attributed to the PAT owner but authored as the name/email below.
+    pipeline_commit_author_name: str = "giga-pipeline[bot]"
+    pipeline_commit_author_email: str = "giga-pipeline[bot]@users.noreply.github.com"
+
+    # Pipeline behaviour
+    pipeline_human_gate: bool = True   # pause after Planner for human approval
+    pipeline_max_retries: int = 3
+
     # Server
     transport: str = "stdio"  # "stdio" or "streamable-http"
     host: str = "0.0.0.0"

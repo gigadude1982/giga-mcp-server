@@ -1,9 +1,10 @@
 # giga-mcp-server
 
-An MCP server that uses AI agents to enrich and process JIRA tickets. Point it at a JIRA project and it will analyze tickets, suggest priorities and labels, generate acceptance criteria, detect duplicates, and break epics into subtasks — all powered by Claude.
+An MCP server that uses AI agents to enrich and autonomously implement JIRA tickets. Point it at a JIRA project and a GitHub repository and it will analyze tickets, enrich metadata, and — for tickets ready for implementation — plan, write, test, and open a pull request on GitHub entirely autonomously.
 
 ## How it works
 
+### Ticket enrichment (existing)
 ```
 Human creates ticket  ──>  giga-mcp-server  ──>  Enriched JIRA ticket
                             (Claude AI)           - Priority & labels set
@@ -12,26 +13,58 @@ Human creates ticket  ──>  giga-mcp-server  ──>  Enriched JIRA ticket
                                                   - Duplicates flagged
 ```
 
-1. A human creates a rough JIRA ticket (or describes one in natural language)
-2. The server analyzes the ticket using Claude Haiku
-3. AI enriches the ticket: sets priority, labels, issue type, and writes acceptance criteria
-4. Large tickets are split into subtasks automatically
-5. Duplicate detection flags similar existing issues
+### Autonomous implementation pipeline (new in v0.5.0)
+```
+process_ticket(PIT-42)
+       │
+       ▼
+  [Digester]       Normalises ticket into structured spec
+       │
+       ▼
+  [Planner]        Emits file list, approach, test strategy
+       │
+       ▼ ── posts plan to JIRA, pauses for human approval ──
+       │
+process_ticket(PIT-42, approve_plan=True)
+       │
+       ├──────────────────────────┐
+       ▼                          ▼
+[Implementer(s)]           [Test Writer(s)]   ← parallel
+       │                          │
+       └──────────┬───────────────┘
+                  ▼
+          [Validator]       Checks impl ↔ test coherence
+                  │
+                  ▼
+          [PR Minter]       Writes PR title, body, commit message
+                  │
+                  ▼
+       Atomic commit to branch → open PR → poll CI
+                  │
+                  ▼
+       JIRA ticket → "In Review"
+```
 
 ## Features
 
 - **AI ticket creation**: Describe a feature or bug in plain English, get a structured JIRA story
 - **AI enrichment**: Analyzes existing tickets and updates priority, labels, description, and acceptance criteria
+- **Autonomous pipeline**: Full Digester → Planner → Implementer → Validator → PR Minter pipeline powered by Claude Sonnet
+- **Human-in-the-loop gate**: Pipeline pauses after the Planner, posts the plan to JIRA, and waits for explicit approval before writing any code
+- **Atomic commits**: All file changes land in a single commit via the GitHub Git Data API — no intermediate states
+- **CI integration**: Pipeline polls GitHub Actions after opening the PR and reports pass/fail back to JIRA
 - **Batch processing**: Enrich all unprocessed backlog tickets in one call
 - **Duplicate detection**: Fuzzy-matches tickets against recent issues to flag duplicates
 - **Subtask generation**: Automatically splits large tickets into actionable subtasks
-- **Retry logic**: Exponential backoff on JIRA API calls
+- **Retry logic**: Per-stage retry with exponential backoff; configurable `GIGA_PIPELINE_MAX_RETRIES`
 - **OAuth support**: Optional Cognito JWT authentication for streamable-http transport
 - **MCP Inspector support**: `--inspect` mode with mock clients for development
-- **File logging**: Optional log file output via `GIGA_LOG_FILE`
+- **File logging**: Set `GIGA_LOG_FILE` to write structured logs to a file alongside stderr
 - **Cloud-ready**: Supports stdio and streamable-http transports
 
 ## MCP Tools
+
+### Enrichment tools
 
 | Tool | Description |
 |------|-------------|
@@ -43,12 +76,31 @@ Human creates ticket  ──>  giga-mcp-server  ──>  Enriched JIRA ticket
 | `list_backlog` | List tickets in the project backlog |
 | `update_ticket_status` | Transition a JIRA ticket to a new status |
 | `find_duplicates` | Check a ticket against recent issues for duplicates |
+| `get_server_info` | Return server name, version, and runtime config |
+
+### Autonomous pipeline tools
+
+| Tool | Description |
+|------|-------------|
+| `process_ticket` | Run the autonomous implementation pipeline for a JIRA ticket |
+| `get_pipeline_status` | Get the current status of a pipeline run |
+
+#### `process_ticket` two-call flow
+
+```
+# Step 1 — digest + plan (pauses for review, posts plan to JIRA)
+process_ticket(issue_key="PIT-42")
+
+# Step 2 — approve plan, implement, test, open PR
+process_ticket(issue_key="PIT-42", approve_plan=True)
+```
 
 ## Prerequisites
 
 - Python 3.11+
 - Atlassian Cloud account with an [API token](https://id.atlassian.com/manage-profile/security/api-tokens)
 - Anthropic API key for Claude
+- GitHub account with a [personal access token](https://github.com/settings/tokens) — classic token with `repo` and `workflow` scopes (for the autonomous pipeline)
 
 ## Setup
 
@@ -69,7 +121,7 @@ Copy `.env.example` to `.env` and fill in your values:
 cp .env.example .env
 ```
 
-Key settings:
+### Required settings
 
 | Variable | Description |
 |----------|-------------|
@@ -78,14 +130,47 @@ Key settings:
 | `GIGA_JIRA_API_TOKEN` | Atlassian API token |
 | `GIGA_JIRA_PROJECT_KEY` | JIRA project key (e.g., `PIT`) |
 | `GIGA_ANTHROPIC_API_KEY` | Anthropic API key for Claude |
+
+### Pipeline settings (required for `process_ticket`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GIGA_GITHUB_TOKEN` | — | GitHub [classic PAT](https://github.com/settings/tokens) with `repo` and `workflow` scopes |
+| `GIGA_GITHUB_REPO` | — | Target repo in `owner/repo` format |
+| `GIGA_GITHUB_BASE_BRANCH` | `main` | Branch to create feature branches from |
+| `GIGA_PIPELINE_HUMAN_GATE` | `true` | Pause after Planner for human approval |
+| `GIGA_PIPELINE_MAX_RETRIES` | `3` | Per-stage retry limit |
+
+### Optional settings
+
+| Variable | Description |
+|----------|-------------|
 | `GIGA_TRANSPORT` | `stdio` (default) or `streamable-http` |
 | `GIGA_LOG_FILE` | Optional path for file logging |
-| `GIGA_COGNITO_USER_POOL_ID` | Optional: enables OAuth (Cognito JWT verification) |
+| `GIGA_COGNITO_USER_POOL_ID` | Enables OAuth (Cognito JWT verification) |
 | `GIGA_COGNITO_REGION` | Cognito region (default: `us-east-1`) |
-| `GIGA_COGNITO_CLIENT_ID` | Optional: restrict to a specific Cognito app client |
+| `GIGA_COGNITO_CLIENT_ID` | Restrict to a specific Cognito app client |
 | `GIGA_PUBLIC_URL` | Public URL for OAuth resource metadata |
 
-See [.env.example](.env.example) for all options.
+### Repo pipeline config (optional)
+
+Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
+
+```json
+{
+  "language": "python",
+  "test_framework": "pytest",
+  "test_command": "pytest",
+  "coding_standards": "Follow PEP 8. Use type hints. Use structlog for logging.",
+  "source_dirs": ["src"],
+  "test_dirs": ["tests"],
+  "max_retries_per_stage": 3,
+  "human_gate_after_planner": true,
+  "branch_prefix": "auto/"
+}
+```
+
+If the file is absent, sensible defaults are used.
 
 ## Usage
 
@@ -121,7 +206,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
         "GIGA_JIRA_USERNAME": "you@company.com",
         "GIGA_JIRA_API_TOKEN": "your-token",
         "GIGA_JIRA_PROJECT_KEY": "PIT",
-        "GIGA_ANTHROPIC_API_KEY": "sk-ant-..."
+        "GIGA_ANTHROPIC_API_KEY": "sk-ant-...",
+        "GIGA_GITHUB_TOKEN": "ghp_...",
+        "GIGA_GITHUB_REPO": "owner/repo"
       }
     }
   }
@@ -149,7 +236,7 @@ Manual deploy: `scripts/deploy.sh` (first deploy) or `scripts/deploy.sh --update
 | Script | Description |
 |--------|-------------|
 | `scripts/inspect-local.sh` | Launch MCP Inspector with local mock server |
-| `scripts/inspect-remote.sh` | Launch MCP Inspector for remote server (Zscaler TLS bypass by default) |
+| `scripts/inspect-remote.sh` | Launch MCP Inspector for remote server |
 | `scripts/deploy.sh` | Deploy to App Runner via ECR |
 | `scripts/setup-auth.sh` | Set up Cognito auth (create pool, client, test user, get tokens) |
 
@@ -162,8 +249,11 @@ pytest tests/ -v
 # Lint
 ruff check src/ tests/
 
-# Run tests + lint
+# Run tests + lint (run before every commit)
 pytest tests/ -v && ruff check src/ tests/
+
+# After bumping the version in pyproject.toml, reinstall so the running server picks it up
+pip install -e .
 ```
 
 ## Architecture
@@ -177,8 +267,15 @@ src/giga_mcp_server/
 ├── auth.py            # Cognito JWT token verifier for OAuth
 ├── retry.py           # async_retry decorator with exponential backoff
 ├── inspect_stubs.py   # Mock clients for --inspect mode
-└── jira/
-    └── client.py      # JIRA API wrapper (atlassian-python-api)
+├── jira/
+│   └── client.py      # JIRA API wrapper (atlassian-python-api)
+└── pipeline/
+    ├── agent_prompts.py   # 6 agent contracts (system prompts + I/O JSON schemas)
+    ├── agent_runner.py    # Claude Sonnet calls with schema validation + retry
+    ├── github_tools.py    # GitHub Data API: branches, files, atomic commits, PRs, CI polling
+    ├── jira_bridge.py     # ADF text extraction + pipeline-facing JIRA wrappers
+    ├── orchestrator.py    # Full pipeline: Digester→Planner→Impl∥Test→Validator→PRMinter
+    └── repo_config.py     # .giga-pipeline.json loader with defaults
 ```
 
 ## License
