@@ -334,10 +334,14 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
     return "\n".join(lines)
 
 
+_PIPELINE_TERMINAL_STATUSES = {"In Review", "Done", "Closed", "Resolved"}
+
+
 @mcp.tool()
 async def process_ticket(
     issue_key: str,
     approve_plan: bool = False,
+    force: bool = False,
     ctx: Context = None,
 ) -> str:
     """Autonomously implement a JIRA ticket: digest → plan → implement → test → PR.
@@ -352,6 +356,8 @@ async def process_ticket(
         issue_key:    The JIRA issue key to implement, e.g. PIT-42.
         approve_plan: Set True to approve a previously generated plan and proceed
                       with implementation.
+        force:        Set True to reprocess a ticket that has already been implemented.
+                      Use with caution — will create a new branch and PR.
     """
     app = _app(ctx)
 
@@ -371,6 +377,16 @@ async def process_ticket(
             + state.to_summary()
         )
     else:
+        if not force:
+            # Guard against reprocessing: check current JIRA status
+            ticket = await app.jira_client.get_issue(issue_key)
+            jira_status = ticket.get("status", "")
+            if jira_status in _PIPELINE_TERMINAL_STATUSES:
+                return (
+                    f"{issue_key} is already '{jira_status}' in JIRA — looks like it's "
+                    f"been implemented. Use `force=True` to reprocess anyway."
+                )
+
         state = PipelineState(ticket_key=issue_key)
         app.pipeline_runs[issue_key] = state
         state = await app.pipeline.run(issue_key, state)
