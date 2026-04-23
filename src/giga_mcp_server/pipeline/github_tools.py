@@ -47,13 +47,23 @@ class ChecksStatus:
 class GitHubClient:
     """Async GitHub client using the Git Data API for atomic commits."""
 
-    def __init__(self, token: str, repo: str) -> None:
+    def __init__(
+        self,
+        token: str,
+        repo: str,
+        commit_author_name: str = "giga-pipeline[bot]",
+        commit_author_email: str = "giga-pipeline[bot]@users.noreply.github.com",
+    ) -> None:
         """
         Args:
             token: GitHub personal access token (needs repo + workflow scopes).
             repo:  Owner/repo string, e.g. "daltonbruce/giga-mcp-server".
+            commit_author_name:  Display name for pipeline commits.
+            commit_author_email: Email for pipeline commits.
         """
         self._repo = repo
+        self._commit_author_name = commit_author_name
+        self._commit_author_email = commit_author_email
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -215,9 +225,16 @@ class GitHubClient:
         parent_sha: str,
     ) -> str:
         url = f"{_GH_API}/repos/{self._repo}/git/commits"
+        author = {"name": self._commit_author_name, "email": self._commit_author_email}
         resp = await client.post(
             url,
-            json={"message": message, "tree": tree_sha, "parents": [parent_sha]},
+            json={
+                "message": message,
+                "tree": tree_sha,
+                "parents": [parent_sha],
+                "author": author,
+                "committer": author,
+            },
         )
         resp.raise_for_status()
         return resp.json()["sha"]

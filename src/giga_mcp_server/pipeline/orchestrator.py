@@ -77,6 +77,8 @@ class PipelineOrchestrator:
         self._github = GitHubClient(
             token=settings.github_token,
             repo=settings.github_repo,
+            commit_author_name=settings.pipeline_commit_author_name,
+            commit_author_email=settings.pipeline_commit_author_email,
         )
 
     async def run(self, ticket_key: str, state: PipelineState) -> PipelineState:
