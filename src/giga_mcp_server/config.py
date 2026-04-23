@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     cognito_client_id: str = ""
     public_url: str = ""  # e.g. https://mcp.gigacorp.co — used for OAuth resource metadata
 
+    # GitHub — required for autonomous pipeline
+    github_token: str = Field(default="", description="GitHub PAT (repo + workflow scopes)")
+    github_repo: str = Field(default="", description="Target repo in owner/repo format")
+    github_base_branch: str = "main"
+
+    # Pipeline behaviour
+    pipeline_human_gate: bool = True   # pause after Planner for human approval
+    pipeline_max_retries: int = 3
+
     # Server
     transport: str = "stdio"  # "stdio" or "streamable-http"
     host: str = "0.0.0.0"

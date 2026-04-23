@@ -13,6 +13,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from giga_mcp_server.config import Settings
 from giga_mcp_server.enrichment import TicketEnricher
 from giga_mcp_server.jira.client import JiraClient
+from giga_mcp_server.pipeline.orchestrator import PipelineOrchestrator, PipelineState
 
 
 def _configure_logging(log_file: str | None) -> None:
@@ -47,6 +48,8 @@ class AppContext:
     jira_client: JiraClient
     enricher: TicketEnricher
     settings: Settings
+    pipeline: PipelineOrchestrator
+    pipeline_runs: dict[str, PipelineState]
 
 
 @asynccontextmanager
@@ -57,9 +60,16 @@ async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     settings = Settings()
     jira_client = MockJiraClient(settings)
     enricher = MockTicketEnricher(jira_client, settings)
+    pipeline = PipelineOrchestrator(settings, jira_client)
 
     logger.info("server_started", version=_VERSION, transport=settings.transport, mode="inspect")
-    yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
+    yield AppContext(
+        jira_client=jira_client,
+        enricher=enricher,
+        settings=settings,
+        pipeline=pipeline,
+        pipeline_runs={},
+    )
     logger.info("server_stopped")
 
 
@@ -70,9 +80,16 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
     jira_client = JiraClient(settings)
     enricher = TicketEnricher(jira_client, settings)
+    pipeline = PipelineOrchestrator(settings, jira_client)
 
     logger.info("server_started", version=_VERSION, transport=settings.transport)
-    yield AppContext(jira_client=jira_client, enricher=enricher, settings=settings)
+    yield AppContext(
+        jira_client=jira_client,
+        enricher=enricher,
+        settings=settings,
+        pipeline=pipeline,
+        pipeline_runs={},
+    )
     logger.info("server_stopped")
 
 
@@ -109,7 +126,11 @@ async def get_server_info(ctx: Context = None) -> str:
         "**Name:** giga-mcp-server",
         f"**Version:** {_VERSION}",
         f"**Transport:** {s.transport}",
+        f"**JIRA URL:** {s.jira_url}",
+        f"**JIRA User:** {s.jira_username}",
         f"**JIRA Project:** {s.jira_project_key}",
+        f"**GitHub Repo:** {s.github_repo or '(not set)'}",
+        f"**GitHub Base Branch:** {s.github_base_branch}",
         f"**AI Model:** {s.anthropic_model}",
         f"**Auth:** {'enabled' if s.auth_enabled else 'disabled'}",
     ]
@@ -311,6 +332,65 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
     for key, ratio in matches:
         lines.append(f"- **{key}**: {ratio:.0%} similarity")
     return "\n".join(lines)
+
+
+@mcp.tool()
+async def process_ticket(
+    issue_key: str,
+    approve_plan: bool = False,
+    ctx: Context = None,
+) -> str:
+    """Autonomously implement a JIRA ticket: digest → plan → implement → test → PR.
+
+    On the first call (approve_plan=False), runs through the Digester and Planner
+    stages, posts the plan as a JIRA comment, then pauses for review.
+
+    On the second call (approve_plan=True), resumes from the approved plan and
+    runs the full implementation, validation, and PR creation.
+
+    Args:
+        issue_key:    The JIRA issue key to implement, e.g. PIT-42.
+        approve_plan: Set True to approve a previously generated plan and proceed
+                      with implementation.
+    """
+    app = _app(ctx)
+
+    if not app.settings.github_token:
+        return "Pipeline not configured: GIGA_GITHUB_TOKEN is missing."
+    if not app.settings.github_repo:
+        return "Pipeline not configured: GIGA_GITHUB_REPO is missing."
+
+    state = app.pipeline_runs.get(issue_key)
+
+    if approve_plan and state and state.status == "awaiting_approval":
+        state = await app.pipeline.run_from_plan(issue_key, state)
+        app.pipeline_runs[issue_key] = state
+    elif state and state.status in ("running", "awaiting_approval"):
+        return (
+            f"Pipeline for {issue_key} is already {state.status}.\n"
+            + state.to_summary()
+        )
+    else:
+        state = PipelineState(ticket_key=issue_key)
+        app.pipeline_runs[issue_key] = state
+        state = await app.pipeline.run(issue_key, state)
+        app.pipeline_runs[issue_key] = state
+
+    return state.to_summary()
+
+
+@mcp.tool()
+async def get_pipeline_status(issue_key: str, ctx: Context = None) -> str:
+    """Get the current status of an autonomous pipeline run for a JIRA ticket.
+
+    Args:
+        issue_key: The JIRA issue key, e.g. PIT-42.
+    """
+    app = _app(ctx)
+    state = app.pipeline_runs.get(issue_key)
+    if not state:
+        return f"No pipeline run found for {issue_key}."
+    return state.to_summary()
 
 
 # ---------------------------------------------------------------------------

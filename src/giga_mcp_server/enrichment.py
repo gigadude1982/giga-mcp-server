@@ -99,7 +99,7 @@ class TicketEnricher:
         """Parse a natural language description into a JIRA ticket using AI."""
         response = await self._client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=4096,
             system=_STORY_CREATION_PROMPT,
             messages=[{"role": "user", "content": description}],
         )
@@ -297,7 +297,7 @@ class TicketEnricher:
     async def _call_claude(self, user_message: str) -> dict[str, Any]:
         response = await self._client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=4096,
             system=_ANALYSIS_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
