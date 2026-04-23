@@ -358,6 +358,8 @@ async def process_ticket(
                       with implementation.
         force:        Set True to reprocess a ticket that has already been implemented.
                       Use with caution — will create a new branch and PR.
+                      Combine with approve_plan=True to skip the human gate and run
+                      the full pipeline end-to-end in a single call.
     """
     app = _app(ctx)
 
@@ -389,7 +391,8 @@ async def process_ticket(
 
         state = PipelineState(ticket_key=issue_key)
         app.pipeline_runs[issue_key] = state
-        state = await app.pipeline.run(issue_key, state)
+        # force+approve_plan together means "reprocess end-to-end, skip human gate"
+        state = await app.pipeline.run(issue_key, state, skip_human_gate=force and approve_plan)
         app.pipeline_runs[issue_key] = state
 
     return state.to_summary()

@@ -81,7 +81,12 @@ class PipelineOrchestrator:
             commit_author_email=settings.pipeline_commit_author_email,
         )
 
-    async def run(self, ticket_key: str, state: PipelineState) -> PipelineState:
+    async def run(
+        self,
+        ticket_key: str,
+        state: PipelineState,
+        skip_human_gate: bool = False,
+    ) -> PipelineState:
         """Execute the full pipeline. Mutates and returns the state object."""
         state.started_at = _now()
         state.status = "running"
@@ -89,7 +94,7 @@ class PipelineOrchestrator:
         try:
             config = await load_repo_config(self._github, self._settings.github_repo,
                                             self._settings.github_base_branch)
-            await self._run_pipeline(ticket_key, state, config)
+            await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
         except _HaltError as e:
             state.status = "halted"
             state.error = str(e)
@@ -104,7 +109,11 @@ class PipelineOrchestrator:
         return state
 
     async def _run_pipeline(
-        self, ticket_key: str, state: PipelineState, config: RepoConfig
+        self,
+        ticket_key: str,
+        state: PipelineState,
+        config: RepoConfig,
+        skip_human_gate: bool = False,
     ) -> None:
         max_retries = config.max_retries_per_stage
 
@@ -152,7 +161,7 @@ class PipelineOrchestrator:
         logger.info("stage_complete", stage="planner", ticket=ticket_key)
 
         # ── Human gate ───────────────────────────────────────────────────
-        if config.human_gate_after_planner:
+        if config.human_gate_after_planner and not skip_human_gate:
             state.status = "awaiting_approval"
             state.stage = "awaiting_approval"
             comment = _format_plan_comment(ticket_key, spec, plan)
