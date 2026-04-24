@@ -191,6 +191,15 @@ coding_standards includes a Prettier config, your code MUST already be formatted
 as Prettier would format it — correct line length, quote style, trailing commas, bracket \
 spacing, and JSX formatting. A Prettier lint error will fail the CI build. When in doubt, \
 break long lines and match the style of existing_content exactly.
+- JSX line length: if any JSX line (including text content, attribute values, or element \
+children) would exceed the Prettier printWidth (default 80 chars), break it. Text that is \
+a child of a JSX element must go on its own indented line if the parent tag + text would \
+exceed the limit. Attribute values that are long strings must also break. Count characters \
+carefully — column 80 is the hard limit.
+- React imports: NEVER add `import React from 'react'` in files that use the automatic \
+JSX transform (React 17+). Check existing_content and related_files — if no other file \
+imports React directly, the project uses the automatic transform and the import is \
+unnecessary. Adding it will trigger the no-unused-vars ESLint rule and fail the build.
 """,
         "input_schema": {
             "type": "object",
@@ -263,6 +272,10 @@ PropTypes definition and pass every isRequired prop in every render/renderHook c
 Missing required props will cause tests to fail or render undefined values.
 - Do not use screen.debug() in committed tests.
 - Test files live alongside source (e.g. src/components/Foo.test.js, not tests/Foo.test.js).
+- NEVER add `import React from 'react'` in test files for projects using the automatic \
+JSX transform (React 17+). Check implementation_contents — if no file imports React \
+directly, the project uses the automatic transform and the import is an unused variable \
+that will fail the no-unused-vars ESLint rule.
 """,
         "input_schema": {
             "type": "object",
