@@ -169,7 +169,7 @@ cp .env.example .env
 | `GIGA_JIRA_DEFAULT_PRIORITY`   | `Medium`  | Default priority when creating tickets                  |
 | `GIGA_JIRA_INTAKE_STATUS`      | `To Do`   | Status assigned to newly created tickets                |
 | `GIGA_JIRA_PROCESSED_LABEL`    | `ai-processed` | Label added to enriched tickets                    |
- | `GIGA_ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001`     | Claude model for enrichment; pipeline always uses Sonnet |
+| `GIGA_ANTHROPIC_MODEL`         | `claude-haiku-4-5-20251001` | Claude model for enrichment; pipeline always uses Sonnet |
 
 ### Repo pipeline config (optional)
 
