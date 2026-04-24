@@ -181,6 +181,11 @@ layout/wrapper components, and follow the same state management patterns already
 - For React projects: every prop used in a component MUST be declared in a PropTypes \
 definition. Missing PropTypes will trigger the react/prop-types ESLint rule and fail \
 the build. Always import PropTypes and add a .propTypes block at the bottom of the file.
+- If you create a CSS module file (e.g. Foo.module.css), you MUST import it in the \
+component: `import styles from './Foo.module.css'` and reference classes as \
+`styles.className`. Never create a CSS module and leave it unimported.
+- If the test plan references data-testid attributes, you MUST add those attributes \
+to the corresponding JSX elements in the implementation (e.g. data-testid="footer-tagline").
 """,
         "input_schema": {
             "type": "object",
@@ -246,6 +251,11 @@ React / Jest specific rules (apply when test_framework is jest):
 Provider — failure to do so will cause tests to throw at runtime.
 - Mock fetch/axios calls with jest.fn() or jest.spyOn(); restore mocks in afterEach.
 - Prefer queries in this order: getByRole, getByLabelText, getByText, getByTestId.
+- Only use getByTestId if the implementation file contains a matching data-testid attribute. \
+Never reference a data-testid that doesn't exist in the component.
+- Always pass ALL required props when rendering a component. Check the component's \
+PropTypes definition and pass every isRequired prop in every render/renderHook call. \
+Missing required props will cause tests to fail or render undefined values.
 - Do not use screen.debug() in committed tests.
 - Test files live alongside source (e.g. src/components/Foo.test.js, not tests/Foo.test.js).
 """,
