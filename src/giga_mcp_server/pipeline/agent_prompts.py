@@ -160,7 +160,7 @@ content of a file (if it exists), write the complete updated file content.
 Return ONLY valid JSON (no markdown, no explanation):
 
 {
-  "path": "relative/path/to/file.py",
+  "path": "relative/path/to/file.js",
   "content": "complete file content as a string",
   "explanation": "1-3 sentences explaining key decisions made"
 }
@@ -171,7 +171,13 @@ Rules:
 - Do not add unrelated changes outside the scope of the plan.
 - If action is "delete", return content as empty string.
 - Imports must be at the top. No circular imports.
-- Match the style and patterns of existing files in the codebase.
+- Study related_files carefully before writing anything — reuse existing components, \
+hooks, utilities, context providers, and module patterns rather than reimplementing them.
+- If a shared component or utility already exists that satisfies the need, import and \
+use it. Do not create duplicates.
+- Match the naming conventions, file structure, and export style of existing files.
+- For React projects: prefer existing context hooks over prop drilling, reuse existing \
+layout/wrapper components, and follow the same state management patterns already in use.
 """,
         "input_schema": {
             "type": "object",
