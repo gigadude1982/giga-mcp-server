@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import logging
 import sys
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 import structlog
@@ -50,6 +51,7 @@ class AppContext:
     settings: Settings
     pipeline: PipelineOrchestrator
     pipeline_runs: dict[str, PipelineState]
+    pipeline_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
 @asynccontextmanager
@@ -371,8 +373,12 @@ async def process_ticket(
     state = app.pipeline_runs.get(issue_key)
 
     if approve_plan and state and state.status == "awaiting_approval":
-        state = await app.pipeline.run_from_plan(issue_key, state)
-        app.pipeline_runs[issue_key] = state
+        task = asyncio.create_task(app.pipeline.run_from_plan(issue_key, state))
+        app.pipeline_tasks[issue_key] = task
+        return (
+            f"Plan approved. Implementation started for {issue_key}.\n"
+            f"Use `get_pipeline_status` to check progress."
+        )
     elif state and state.status in ("running", "awaiting_approval"):
         return (
             f"Pipeline for {issue_key} is already {state.status}.\n"
@@ -392,10 +398,14 @@ async def process_ticket(
         state = PipelineState(ticket_key=issue_key)
         app.pipeline_runs[issue_key] = state
         # force+approve_plan together means "reprocess end-to-end, skip human gate"
-        state = await app.pipeline.run(issue_key, state, skip_human_gate=force and approve_plan)
-        app.pipeline_runs[issue_key] = state
-
-    return state.to_summary()
+        task = asyncio.create_task(
+            app.pipeline.run(issue_key, state, skip_human_gate=force and approve_plan)
+        )
+        app.pipeline_tasks[issue_key] = task
+        return (
+            f"Pipeline started for {issue_key}.\n"
+            f"Use `get_pipeline_status` to check progress."
+        )
 
 
 @mcp.tool()
@@ -409,7 +419,12 @@ async def get_pipeline_status(issue_key: str, ctx: Context = None) -> str:
     state = app.pipeline_runs.get(issue_key)
     if not state:
         return f"No pipeline run found for {issue_key}."
-    return state.to_summary()
+    summary = state.to_summary()
+    if state.status == "running":
+        summary += f"\n\n_Still in progress (stage: {state.stage}) — poll again for updates._"
+    elif state.status == "awaiting_approval":
+        summary += "\n\n_Plan ready for review. Call `process_ticket` with `approve_plan=True` to proceed._"
+    return summary
 
 
 # ---------------------------------------------------------------------------
