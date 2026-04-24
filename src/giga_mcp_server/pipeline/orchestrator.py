@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from giga_mcp_server.config import Settings
+from giga_mcp_server.config import Board, Settings
 from giga_mcp_server.jira.client import JiraClient
 from giga_mcp_server.pipeline.agent_runner import AgentRunner
 from giga_mcp_server.pipeline.github_tools import FileChange, GitHubClient
@@ -29,13 +29,15 @@ logger = structlog.get_logger()
 @dataclass
 class PipelineState:
     ticket_key: str
-    status: str = "pending"          # pending | running | awaiting_approval | done | failed | halted
+    status: str = "pending"  # pending | running | awaiting_approval | done | failed | halted
     branch: str = ""
+    repo: str = ""  # github repo this run targets
+    base_branch: str = ""  # github base branch for this board
     pr_url: str = ""
     pr_number: int = 0
     ci_state: str = ""
     error: str = ""
-    stage: str = ""                  # current/last stage name
+    stage: str = ""  # current/last stage name
     spec: dict[str, Any] = field(default_factory=dict)
     plan: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
@@ -47,6 +49,8 @@ class PipelineState:
             f"**Status:** {self.status}",
             f"**Stage:** {self.stage}",
         ]
+        if self.repo:
+            lines.append(f"**Repo:** {self.repo}")
         if self.branch:
             lines.append(f"**Branch:** {self.branch}")
         if self.pr_url:
@@ -74,12 +78,20 @@ class PipelineOrchestrator:
         self._settings = settings
         self._jira = jira_client
         self._runner = AgentRunner(api_key=settings.anthropic_api_key)
-        self._github = GitHubClient(
-            token=settings.github_token,
-            repo=settings.github_repo,
-            commit_author_name=settings.pipeline_commit_author_name,
-            commit_author_email=settings.pipeline_commit_author_email,
-        )
+        self._github_clients: dict[str, GitHubClient] = {}
+
+    def _github_for(self, board: Board) -> GitHubClient:
+        """Return a GitHubClient for the board's repo, building+caching on first use."""
+        client = self._github_clients.get(board.github_repo)
+        if client is None:
+            client = GitHubClient(
+                token=self._settings.github_token,
+                repo=board.github_repo,
+                commit_author_name=self._settings.pipeline_commit_author_name,
+                commit_author_email=self._settings.pipeline_commit_author_email,
+            )
+            self._github_clients[board.github_repo] = client
+        return client
 
     async def run(
         self,
@@ -92,13 +104,19 @@ class PipelineOrchestrator:
         state.status = "running"
 
         try:
+            board = self._settings.board_for_issue(ticket_key)
+            github = self._github_for(board)
+            state.repo = board.github_repo
+            state.base_branch = board.github_base_branch
             config = await load_repo_config(
-                self._github,
-                self._settings.github_repo,
-                self._settings.github_base_branch,
+                github,
+                board.github_repo,
+                board.github_base_branch,
                 default_max_retries=self._settings.pipeline_max_retries,
             )
-            await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
+            await self._run_pipeline(
+                ticket_key, state, config, github, skip_human_gate=skip_human_gate
+            )
         except _HaltError as e:
             state.status = "halted"
             state.error = str(e)
@@ -117,6 +135,7 @@ class PipelineOrchestrator:
         ticket_key: str,
         state: PipelineState,
         config: RepoConfig,
+        github: GitHubClient,
         skip_human_gate: bool = False,
     ) -> None:
         max_retries = config.max_retries_per_stage
@@ -142,13 +161,13 @@ class PipelineOrchestrator:
 
         # ── Stage 2: Plan ────────────────────────────────────────────────
         state.stage = "planner"
-        existing_files = await self._github.list_files(
-            branch=self._settings.github_base_branch
-        )
+        existing_files = await github.list_files(branch=state.base_branch)
         # Fetch content of likely-affected files (best-effort)
         relevant_contents = await self._fetch_relevant_files(
             spec.get("affected_areas", []),
             existing_files,
+            github,
+            state.base_branch,
         )
 
         plan_input = {
@@ -174,11 +193,9 @@ class PipelineOrchestrator:
             # The pipeline pauses here; resumption requires calling run_from_plan()
             return
 
-        await self._run_from_plan(ticket_key, state, config, spec, plan)
+        await self._run_from_plan(ticket_key, state, config, github, spec, plan)
 
-    async def run_from_plan(
-        self, ticket_key: str, state: PipelineState
-    ) -> PipelineState:
+    async def run_from_plan(self, ticket_key: str, state: PipelineState) -> PipelineState:
         """Resume a pipeline that was paused at the human gate."""
         if state.status != "awaiting_approval":
             state.error = f"Cannot resume: status is {state.status!r}, expected 'awaiting_approval'"
@@ -187,13 +204,17 @@ class PipelineOrchestrator:
 
         state.status = "running"
         try:
+            board = self._settings.board_for_issue(ticket_key)
+            github = self._github_for(board)
+            state.repo = board.github_repo
+            state.base_branch = board.github_base_branch
             config = await load_repo_config(
-                self._github,
-                self._settings.github_repo,
-                self._settings.github_base_branch,
+                github,
+                board.github_repo,
+                board.github_base_branch,
                 default_max_retries=self._settings.pipeline_max_retries,
             )
-            await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
+            await self._run_from_plan(ticket_key, state, config, github, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"
             state.error = str(e)
@@ -210,6 +231,7 @@ class PipelineOrchestrator:
         ticket_key: str,
         state: PipelineState,
         config: RepoConfig,
+        github: GitHubClient,
         spec: dict[str, Any],
         plan: dict[str, Any],
     ) -> None:
@@ -217,7 +239,7 @@ class PipelineOrchestrator:
 
         # ── Create branch ────────────────────────────────────────────────
         base_branch_name = f"{config.branch_prefix}{ticket_key.lower()}"
-        branch_name = await self._make_branch(base_branch_name)
+        branch_name = await self._make_branch(base_branch_name, github, state.base_branch)
         state.branch = branch_name
         logger.info("branch_created", branch=branch_name, ticket=ticket_key)
 
@@ -234,7 +256,8 @@ class PipelineOrchestrator:
         all_file_specs = impl_files + test_file_specs
         existing_contents = await self._fetch_file_contents(
             [f["path"] for f in all_file_specs],
-            branch=self._settings.github_base_branch,
+            branch=state.base_branch,
+            github=github,
         )
 
         # Build implementer tasks
@@ -250,7 +273,7 @@ class PipelineOrchestrator:
 
         results = await asyncio.gather(*impl_tasks, *test_tasks)
         impl_outputs = list(results[: len(impl_tasks)])
-        test_outputs = list(results[len(impl_tasks):])
+        test_outputs = list(results[len(impl_tasks) :])
 
         all_impl_outputs = impl_outputs + test_outputs
         logger.info(
@@ -266,11 +289,14 @@ class PipelineOrchestrator:
         test_map = {o["path"]: o["content"] for o in test_outputs}
 
         validation = await _with_retry(
-            lambda: self._runner.run("validator", {
-                "spec": spec,
-                "implementation_files": impl_map,
-                "test_files": test_map,
-            }),
+            lambda: self._runner.run(
+                "validator",
+                {
+                    "spec": spec,
+                    "implementation_files": impl_map,
+                    "test_files": test_map,
+                },
+            ),
             max_retries,
             "validator",
         )
@@ -285,13 +311,16 @@ class PipelineOrchestrator:
         state.stage = "pr_minter"
         files_changed = [o["path"] for o in all_impl_outputs]
         minted = await _with_retry(
-            lambda: self._runner.run("pr_minter", {
-                "spec": spec,
-                "plan": plan,
-                "files_changed": files_changed,
-                "validator_summary": validation.get("summary", ""),
-                "ticket_key": ticket_key,
-            }),
+            lambda: self._runner.run(
+                "pr_minter",
+                {
+                    "spec": spec,
+                    "plan": plan,
+                    "files_changed": files_changed,
+                    "validator_summary": validation.get("summary", ""),
+                    "ticket_key": ticket_key,
+                },
+            ),
             max_retries,
             "pr_minter",
         )
@@ -310,7 +339,7 @@ class PipelineOrchestrator:
             )
             for o in all_impl_outputs
         ]
-        await self._github.commit_changes(
+        await github.commit_changes(
             branch=branch_name,
             files=file_changes,
             message=minted["commit_message"],
@@ -319,11 +348,11 @@ class PipelineOrchestrator:
 
         # ── Open PR ──────────────────────────────────────────────────────
         state.stage = "opening_pr"
-        pr = await self._github.open_pull_request(
+        pr = await github.open_pull_request(
             branch=branch_name,
             title=minted["pr_title"],
             body=minted["pr_body"],
-            base_branch=self._settings.github_base_branch,
+            base_branch=state.base_branch,
         )
         state.pr_url = pr.url
         state.pr_number = pr.number
@@ -335,17 +364,16 @@ class PipelineOrchestrator:
 
         # ── Poll CI ──────────────────────────────────────────────────────
         state.stage = "waiting_for_ci"
-        ci_status = await self._github.poll_pr_until_complete(pr.number)
+        ci_status = await github.poll_pr_until_complete(pr.number)
         state.ci_state = ci_status.state
 
         if ci_status.state == "failure":
-            logger.warning(
-                "ci_failed", pr=pr.number, failed=ci_status.failed, ticket=ticket_key
-            )
+            logger.warning("ci_failed", pr=pr.number, failed=ci_status.failed, ticket=ticket_key)
             await add_pipeline_comment(
-                self._jira, ticket_key,
+                self._jira,
+                ticket_key,
                 f"CI failed on PR #{pr.number}. Failed checks: "
-                f"{', '.join(ci_status.failed)}\nPR: {pr.url}"
+                f"{', '.join(ci_status.failed)}\nPR: {pr.url}",
             )
             state.status = "failed"
             state.error = f"CI checks failed: {ci_status.failed}"
@@ -364,18 +392,15 @@ class PipelineOrchestrator:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _make_branch(self, base_name: str) -> str:
+    async def _make_branch(self, base_name: str, github: GitHubClient, base_branch: str) -> str:
         """Create a branch, appending a datestamp if the base name already exists."""
         try:
-            return await self._github.create_branch(
-                base_name, from_branch=self._settings.github_base_branch
-            )
+            return await github.create_branch(base_name, from_branch=base_branch)
         except Exception:
             from datetime import date
+
             stamped = f"{base_name}-{date.today().strftime('%Y%m%d')}"
-            return await self._github.create_branch(
-                stamped, from_branch=self._settings.github_base_branch
-            )
+            return await github.create_branch(stamped, from_branch=base_branch)
 
     async def _run_implementer(
         self,
@@ -419,8 +444,7 @@ class PipelineOrchestrator:
             "spec": spec,
             "test_framework": config.test_framework,
             "implementation_contents": {
-                k: v for k, v in existing_contents.items()
-                if not k.startswith("tests/")
+                k: v for k, v in existing_contents.items() if not k.startswith("tests/")
             },
             "existing_test_content": existing_contents.get(path, ""),
             "coding_standards": config.coding_standards,
@@ -430,7 +454,11 @@ class PipelineOrchestrator:
         )
 
     async def _fetch_relevant_files(
-        self, affected_areas: list[str], all_files: list[str]
+        self,
+        affected_areas: list[str],
+        all_files: list[str],
+        github: GitHubClient,
+        base_branch: str,
     ) -> dict[str, str]:
         """Fetch contents of files that likely match the affected areas."""
         relevant = []
@@ -442,15 +470,16 @@ class PipelineOrchestrator:
 
         # Cap at 10 files to keep context manageable
         relevant = relevant[:10]
-        return await self._fetch_file_contents(relevant, self._settings.github_base_branch)
+        return await self._fetch_file_contents(relevant, base_branch, github)
 
     async def _fetch_file_contents(
-        self, paths: list[str], branch: str
+        self, paths: list[str], branch: str, github: GitHubClient
     ) -> dict[str, str]:
         """Fetch multiple files concurrently. Skips files that don't exist."""
+
         async def _get(path: str) -> tuple[str, str]:
             try:
-                content = await self._github.get_file(path, branch)
+                content = await github.get_file(path, branch)
                 return path, content
             except Exception:
                 return path, ""
@@ -486,13 +515,9 @@ def _now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
-def _format_plan_comment(
-    ticket_key: str, spec: dict[str, Any], plan: dict[str, Any]
-) -> str:
+def _format_plan_comment(ticket_key: str, spec: dict[str, Any], plan: dict[str, Any]) -> str:
     files = plan.get("files_to_modify", [])
-    file_lines = "\n".join(
-        f"- `{f['path']}` ({f['action']}): {f['reason']}" for f in files
-    )
+    file_lines = "\n".join(f"- `{f['path']}` ({f['action']}): {f['reason']}" for f in files)
     risks = "\n".join(f"- {r}" for r in plan.get("risks", []))
     return (
         f"🤖 **Autonomous pipeline — plan ready for approval** ({ticket_key})\n\n"

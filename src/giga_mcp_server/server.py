@@ -130,25 +130,41 @@ async def get_server_info(ctx: Context = None) -> str:
         f"**Transport:** {s.transport}",
         f"**JIRA URL:** {s.jira_url}",
         f"**JIRA User:** {s.jira_username}",
-        f"**JIRA Project:** {s.jira_project_key}",
-        f"**GitHub Repo:** {s.github_repo or '(not set)'}",
-        f"**GitHub Base Branch:** {s.github_base_branch}",
         f"**AI Model:** {s.anthropic_model}",
         f"**Auth:** {'enabled' if s.auth_enabled else 'disabled'}",
     ]
+    if s.boards:
+        lines.append("**Boards:**")
+        for b in s.boards:
+            lines.append(
+                f"- `{b.jira_project_key}` → {b.github_repo} (base: {b.github_base_branch})"
+            )
+    else:
+        lines.append("**Boards:** (none configured)")
     return "\n".join(lines)
 
 
 @mcp.tool()
-async def create_story(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
+async def create_story(
+    description: str,
+    auto_enrich: bool = True,
+    project: str | None = None,
+    ctx: Context = None,
+) -> str:
     """Create a JIRA ticket from a natural language description. AI structures it into a proper story with priority, labels, and acceptance criteria.
 
     Args:
         description: Natural language description of the feature, bug, or task.
         auto_enrich: If true, automatically enrich the ticket after creation (adds acceptance criteria, subtasks, etc).
+        project: JIRA project key to create the ticket in. Required when multiple boards are configured.
     """
     app = _app(ctx)
-    result = await app.enricher.create_story(description, auto_enrich=auto_enrich)
+    try:
+        result = await app.enricher.create_story(
+            description, auto_enrich=auto_enrich, project=project
+        )
+    except (KeyError, ValueError) as e:
+        return f"Error: {e}"
 
     lines = [
         f"## Created {result.jira_key}",
@@ -219,14 +235,22 @@ async def enrich_ticket(issue_key: str, ctx: Context = None) -> str:
 
 
 @mcp.tool()
-async def process_backlog(limit: int = 10, ctx: Context = None) -> str:
+async def process_backlog(
+    limit: int = 10,
+    project: str | None = None,
+    ctx: Context = None,
+) -> str:
     """Batch-enrich unprocessed tickets in the backlog.
 
     Args:
-        limit: Maximum number of tickets to process.
+        limit: Maximum number of tickets to process (across all boards if project is unset).
+        project: JIRA project key to filter by. If omitted, fans out across all configured boards.
     """
     app = _app(ctx)
-    results = await app.enricher.process_backlog(limit=limit)
+    try:
+        results = await app.enricher.process_backlog(limit=limit, project=project)
+    except KeyError as e:
+        return f"Error: {e}"
 
     if not results:
         return "No unprocessed tickets found in the backlog."
@@ -274,32 +298,67 @@ async def list_backlog(
     limit: int = 20,
     status: str = "To Do",
     unprocessed_only: bool = True,
+    project: str | None = None,
     ctx: Context = None,
 ) -> str:
-    """List tickets in the project, filtered by status.
+    """List tickets across configured boards, filtered by status.
 
     Args:
-        limit: Maximum number of tickets to return.
+        limit: Maximum number of tickets to return per board.
         status: JIRA status to filter by (e.g. 'To Do', 'In Progress', 'Done'). Use 'All' to show all statuses.
         unprocessed_only: If true, only show tickets without the ai-processed label.
+        project: JIRA project key to filter to a single board. If omitted, lists across all boards.
     """
     app = _app(ctx)
     s = app.settings
-    jql = f'project = "{s.jira_project_key}"'
-    if status.lower() != "all":
-        jql += f' AND status = "{status}"'
-    if unprocessed_only:
-        jql += f' AND labels not in ("{s.jira_processed_label}")'
-    jql += " ORDER BY created DESC"
 
-    issues = await app.jira_client.search_issues(jql, max_results=limit)
-    if not issues:
+    if project is not None:
+        try:
+            boards = [s.get_board(project)]
+        except KeyError as e:
+            return f"Error: {e}"
+    else:
+        boards = list(s.boards)
+
+    if not boards:
+        return "No boards configured."
+
+    def _build_jql(project_key: str) -> str:
+        jql = f'project = "{project_key}"'
+        if status.lower() != "all":
+            jql += f' AND status = "{status}"'
+        if unprocessed_only:
+            jql += f' AND labels not in ("{s.jira_processed_label}")'
+        jql += " ORDER BY created DESC"
+        return jql
+
+    sections: list[str] = []
+    total = 0
+    for board in boards:
+        issues = await app.jira_client.search_issues(
+            _build_jql(board.jira_project_key), max_results=limit
+        )
+        total += len(issues)
+        if len(boards) > 1:
+            header = f"### {board.jira_project_key} ({len(issues)})"
+            body = (
+                "\n".join(
+                    f"- **{i['key']}** [{i['priority']}] {i['summary']}  \n  {i['url']}"
+                    for i in issues
+                )
+                if issues
+                else "_No tickets._"
+            )
+            sections.append(f"{header}\n{body}")
+        else:
+            sections.extend(
+                f"- **{i['key']}** [{i['priority']}] {i['summary']}  \n  {i['url']}" for i in issues
+            )
+
+    if total == 0:
         return "No tickets found."
 
-    lines = []
-    for i in issues:
-        lines.append(f"- **{i['key']}** [{i['priority']}] {i['summary']}  \n  {i['url']}")
-    return "\n".join(lines)
+    return "\n\n".join(sections) if len(boards) > 1 else "\n".join(sections)
 
 
 @mcp.tool()
@@ -367,8 +426,10 @@ async def process_ticket(
 
     if not app.settings.github_token:
         return "Pipeline not configured: GIGA_GITHUB_TOKEN is missing."
-    if not app.settings.github_repo:
-        return "Pipeline not configured: GIGA_GITHUB_REPO is missing."
+    try:
+        app.settings.board_for_issue(issue_key)
+    except KeyError as e:
+        return f"Pipeline not configured for {issue_key}: {e}"
 
     state = app.pipeline_runs.get(issue_key)
 
@@ -380,10 +441,7 @@ async def process_ticket(
             f"Use `get_pipeline_status` to check progress."
         )
     elif state and state.status in ("running", "awaiting_approval"):
-        return (
-            f"Pipeline for {issue_key} is already {state.status}.\n"
-            + state.to_summary()
-        )
+        return f"Pipeline for {issue_key} is already {state.status}.\n" + state.to_summary()
     else:
         if not force:
             # Guard against reprocessing: check current JIRA status
@@ -402,10 +460,7 @@ async def process_ticket(
             app.pipeline.run(issue_key, state, skip_human_gate=force and approve_plan)
         )
         app.pipeline_tasks[issue_key] = task
-        return (
-            f"Pipeline started for {issue_key}.\n"
-            f"Use `get_pipeline_status` to check progress."
-        )
+        return f"Pipeline started for {issue_key}.\nUse `get_pipeline_status` to check progress."
 
 
 @mcp.tool()

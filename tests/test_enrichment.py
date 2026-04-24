@@ -101,7 +101,9 @@ class TestTicketEnricher:
         )
 
         enricher = TicketEnricher(mock_jira, mock_settings)
-        result = await enricher.create_story("add dark mode to the settings page", auto_enrich=False)
+        result = await enricher.create_story(
+            "add dark mode to the settings page", auto_enrich=False
+        )
 
         assert result.jira_key == "PROJ-50"
         assert result.summary == "Add dark mode to settings page"
@@ -144,7 +146,9 @@ class TestTicketEnricher:
         )
 
         enricher = TicketEnricher(mock_jira, mock_settings)
-        result = await enricher.create_story("login is crashing when i hit submit", auto_enrich=True)
+        result = await enricher.create_story(
+            "login is crashing when i hit submit", auto_enrich=True
+        )
 
         assert result.jira_key == "PROJ-51"
         # Should have called Claude twice: once for story creation, once for enrichment analysis
@@ -366,6 +370,66 @@ class TestTicketEnricher:
         assert len(matches) == 1
         assert matches[0][0] == "PROJ-10"
         assert matches[0][1] >= 0.85
+
+    @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
+    async def test_analyze_ticket_routes_to_board(
+        self,
+        MockAnthropic: MagicMock,
+        mock_jira: AsyncMock,
+        multi_board_settings: MagicMock,
+        claude_response: dict,
+    ) -> None:
+        """JQL for analyze_ticket uses the board derived from the issue_key prefix."""
+        mock_client = AsyncMock()
+        MockAnthropic.return_value = mock_client
+        mock_msg = MagicMock()
+        mock_msg.content = [MagicMock(text=json.dumps(claude_response))]
+        mock_client.messages.create.return_value = mock_msg
+
+        enricher = TicketEnricher(mock_jira, multi_board_settings)
+        await enricher.analyze_ticket("XYZ-7")
+
+        jql = mock_jira.search_issues.call_args[0][0]
+        assert 'project = "XYZ"' in jql
+        assert 'project = "ABC"' not in jql
+
+    @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
+    async def test_create_story_requires_project_when_multi_board(
+        self,
+        MockAnthropic: MagicMock,
+        mock_jira: AsyncMock,
+        multi_board_settings: MagicMock,
+    ) -> None:
+        MockAnthropic.return_value = AsyncMock()
+        enricher = TicketEnricher(mock_jira, multi_board_settings)
+
+        with pytest.raises(ValueError, match="Multiple boards"):
+            await enricher.create_story("new feature", auto_enrich=False)
+
+    @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
+    async def test_process_backlog_fans_out_across_boards(
+        self,
+        MockAnthropic: MagicMock,
+        mock_jira: AsyncMock,
+        multi_board_settings: MagicMock,
+        claude_response: dict,
+    ) -> None:
+        """With no project given, process_backlog queries each configured board."""
+        mock_client = AsyncMock()
+        MockAnthropic.return_value = mock_client
+        mock_msg = MagicMock()
+        mock_msg.content = [MagicMock(text=json.dumps(claude_response))]
+        mock_client.messages.create.return_value = mock_msg
+        mock_jira.search_issues.return_value = []  # empty so we don't trigger enrichment
+
+        enricher = TicketEnricher(mock_jira, multi_board_settings)
+        await enricher.process_backlog(limit=5)
+
+        # Two boards → two JQL searches
+        assert mock_jira.search_issues.call_count == 2
+        jqls = [c.args[0] for c in mock_jira.search_issues.call_args_list]
+        assert any('project = "ABC"' in q for q in jqls)
+        assert any('project = "XYZ"' in q for q in jqls)
 
     @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
     async def test_process_backlog(

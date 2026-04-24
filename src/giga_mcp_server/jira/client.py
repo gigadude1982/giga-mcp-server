@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 from atlassian import Jira
 
-from giga_mcp_server.config import Settings
+from giga_mcp_server.config import Board, Settings
 from giga_mcp_server.models import IdeaResult, ParsedIdea
 from giga_mcp_server.retry import async_retry
 
@@ -27,13 +27,13 @@ class JiraClient:
         )
 
     @async_retry(max_attempts=3, base_delay=2.0)
-    async def create_story(self, idea: ParsedIdea) -> IdeaResult:
+    async def create_story(self, idea: ParsedIdea, board: Board) -> IdeaResult:
         """Create a JIRA issue from a parsed idea. Runs sync API in a thread."""
-        return await asyncio.to_thread(self._create_story_sync, idea)
+        return await asyncio.to_thread(self._create_story_sync, idea, board)
 
-    def _create_story_sync(self, idea: ParsedIdea) -> IdeaResult:
+    def _create_story_sync(self, idea: ParsedIdea, board: Board) -> IdeaResult:
         fields: dict[str, Any] = {
-            "project": {"key": self._settings.jira_project_key},
+            "project": {"key": board.jira_project_key},
             "summary": idea.summary,
             "description": idea.description,
             "issuetype": {"name": idea.issue_type or self._settings.jira_default_issue_type},
@@ -48,7 +48,7 @@ class JiraClient:
 
         logger.info(
             "creating_jira_issue",
-            project=self._settings.jira_project_key,
+            project=board.jira_project_key,
             summary=idea.summary,
             issue_type=fields["issuetype"]["name"],
         )
@@ -64,9 +64,7 @@ class JiraClient:
         )
 
     @async_retry(max_attempts=3, base_delay=1.0)
-    async def search_issues(
-        self, jql: str, max_results: int = 20
-    ) -> list[dict[str, Any]]:
+    async def search_issues(self, jql: str, max_results: int = 20) -> list[dict[str, Any]]:
         """Search JIRA issues using JQL. Returns simplified issue dicts."""
         results = await asyncio.to_thread(
             self._jira.jql,
@@ -102,9 +100,7 @@ class JiraClient:
     async def transition_issue(self, issue_key: str, status: str) -> bool:
         """Transition a JIRA issue to a new status."""
         try:
-            transitions = await asyncio.to_thread(
-                self._jira.get_issue_transitions, issue_key
-            )
+            transitions = await asyncio.to_thread(self._jira.get_issue_transitions, issue_key)
             target = next(
                 (t for t in transitions if t["name"].lower() == status.lower()),
                 None,
@@ -119,9 +115,7 @@ class JiraClient:
                 )
                 return False
 
-            await asyncio.to_thread(
-                self._jira.set_issue_status, issue_key, target["name"]
-            )
+            await asyncio.to_thread(self._jira.set_issue_status, issue_key, target["name"])
             return True
         except Exception:
             logger.exception("transition_error", issue_key=issue_key)
@@ -133,8 +127,7 @@ class JiraClient:
         raw = await asyncio.to_thread(self._jira.issue, issue_key)
         fields = raw.get("fields", {})
         subtasks = [
-            {"key": s["key"], "summary": s["fields"]["summary"]}
-            for s in fields.get("subtasks", [])
+            {"key": s["key"], "summary": s["fields"]["summary"]} for s in fields.get("subtasks", [])
         ]
         return {
             "key": raw["key"],
@@ -171,10 +164,13 @@ class JiraClient:
         parent_key: str,
         summary: str,
         description: str = "",
+        board: Board | None = None,
     ) -> IdeaResult:
-        """Create a subtask linked to a parent issue."""
+        """Create a subtask linked to a parent issue. Board is derived from parent_key if not given."""
+        if board is None:
+            board = self._settings.board_for_issue(parent_key)
         fields: dict[str, Any] = {
-            "project": {"key": self._settings.jira_project_key},
+            "project": {"key": board.jira_project_key},
             "parent": {"key": parent_key},
             "summary": summary,
             "description": description,
@@ -191,9 +187,7 @@ class JiraClient:
         )
 
     @async_retry(max_attempts=3, base_delay=1.0)
-    async def search_issues_full(
-        self, jql: str, max_results: int = 20
-    ) -> list[dict[str, Any]]:
+    async def search_issues_full(self, jql: str, max_results: int = 20) -> list[dict[str, Any]]:
         """Search JIRA issues using JQL, returning full details."""
         results = await asyncio.to_thread(
             self._jira.jql,

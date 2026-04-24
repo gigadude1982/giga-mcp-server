@@ -20,7 +20,7 @@ class TestJiraClient:
             labels=["frontend", "analytics"],
             issue_type="Story",
         )
-        result = await client.create_story(idea)
+        result = await client.create_story(idea, mock_settings.boards[0])
 
         assert result.jira_key == "PROJ-99"
         assert result.jira_url == "https://test.atlassian.net/browse/PROJ-99"
@@ -43,7 +43,7 @@ class TestJiraClient:
 
         client = JiraClient(mock_settings)
         idea = ParsedIdea(summary="Simple idea", description="Details")
-        result = await client.create_story(idea)
+        result = await client.create_story(idea, mock_settings.boards[0])
 
         assert result.jira_key == "PROJ-100"
         call_args = mock_jira_instance.create_issue.call_args
@@ -187,9 +187,7 @@ class TestJiraClient:
         assert fields["summary"] == "Implement login fix"
 
     @patch("giga_mcp_server.jira.client.Jira")
-    async def test_search_issues_full(
-        self, MockJira: MagicMock, mock_settings: MagicMock
-    ) -> None:
+    async def test_search_issues_full(self, MockJira: MagicMock, mock_settings: MagicMock) -> None:
         mock_jira_instance = MockJira.return_value
         mock_jira_instance.jql.return_value = {
             "issues": [

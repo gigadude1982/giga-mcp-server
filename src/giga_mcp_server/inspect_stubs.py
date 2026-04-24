@@ -36,7 +36,7 @@ class MockJiraClient:
         self._settings = settings
         self._counter = _ISSUE_COUNTER
 
-    async def create_story(self, idea: ParsedIdea) -> IdeaResult:
+    async def create_story(self, idea: ParsedIdea, board: Any = None) -> IdeaResult:
         self._counter += 1
         key = f"DEMO-{self._counter}"
         return IdeaResult(
@@ -59,9 +59,7 @@ class MockJiraClient:
             for i, (summary, _, priority) in enumerate(_FAKE_TICKETS, start=1)
         ]
 
-    async def search_issues_full(
-        self, jql: str, max_results: int = 20
-    ) -> list[dict[str, Any]]:
+    async def search_issues_full(self, jql: str, max_results: int = 20) -> list[dict[str, Any]]:
         return [
             {
                 "key": f"DEMO-{i}",
@@ -104,7 +102,11 @@ class MockJiraClient:
         return True
 
     async def create_subtask(
-        self, parent_key: str, summary: str, description: str = ""
+        self,
+        parent_key: str,
+        summary: str,
+        description: str = "",
+        board: Any = None,
     ) -> IdeaResult:
         self._counter += 1
         key = f"DEMO-{self._counter}"
@@ -130,7 +132,10 @@ class MockTicketEnricher:
         self._settings = settings
 
     async def create_story(
-        self, description: str, auto_enrich: bool = True
+        self,
+        description: str,
+        auto_enrich: bool = True,
+        project: str | None = None,
     ) -> IdeaResult:
         key = f"DEMO-{random.randint(200, 299)}"
         return IdeaResult(
@@ -181,7 +186,9 @@ class MockTicketEnricher:
     async def find_duplicates(self, issue_key: str) -> list[tuple[str, float]]:
         return [("DEMO-3", 0.92)]
 
-    async def process_backlog(self, limit: int = 10) -> list[EnrichmentResult]:
+    async def process_backlog(
+        self, limit: int = 10, project: str | None = None
+    ) -> list[EnrichmentResult]:
         return [
             EnrichmentResult(
                 issue_key=f"DEMO-{i}",

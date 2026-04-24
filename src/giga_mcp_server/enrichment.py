@@ -95,8 +95,25 @@ class TicketEnricher:
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._model = settings.anthropic_model
 
-    async def create_story(self, description: str, auto_enrich: bool = True) -> IdeaResult:
-        """Parse a natural language description into a JIRA ticket using AI."""
+    async def create_story(
+        self,
+        description: str,
+        auto_enrich: bool = True,
+        project: str | None = None,
+    ) -> IdeaResult:
+        """Parse a natural language description into a JIRA ticket using AI.
+
+        project selects the target board by jira_project_key. If omitted and
+        multiple boards are configured, raises ValueError.
+        """
+        if project is not None:
+            board = self._settings.get_board(project)
+        elif len(self._settings.boards) > 1:
+            known = [b.jira_project_key for b in self._settings.boards]
+            raise ValueError(f"Multiple boards configured; specify `project` (known: {known})")
+        else:
+            board = self._settings.default_board()
+
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=4096,
@@ -116,7 +133,7 @@ class TicketEnricher:
             labels=data.get("labels", []),
         )
 
-        result = await self._jira.create_story(idea)
+        result = await self._jira.create_story(idea, board)
         logger.info("story_created", issue_key=result.jira_key, summary=idea.summary)
 
         if auto_enrich:
@@ -128,13 +145,10 @@ class TicketEnricher:
     async def analyze_ticket(self, issue_key: str) -> TicketAnalysis:
         """Fetch a ticket and return AI analysis without modifying JIRA."""
         ticket = await self._jira.get_issue(issue_key)
+        board = self._settings.board_for_issue(issue_key)
 
         # Fetch recent issues for duplicate detection context
-        jql = (
-            f'project = "{self._settings.jira_project_key}" '
-            f"AND key != {issue_key} "
-            f"ORDER BY created DESC"
-        )
+        jql = f'project = "{board.jira_project_key}" AND key != {issue_key} ORDER BY created DESC'
         recent = await self._jira.search_issues(jql, max_results=30)
 
         user_message = self._build_analysis_prompt(ticket, recent)
@@ -223,25 +237,18 @@ class TicketEnricher:
         )
         return result
 
-    async def find_duplicates(
-        self, issue_key: str
-    ) -> list[tuple[str, float]]:
+    async def find_duplicates(self, issue_key: str) -> list[tuple[str, float]]:
         """Check a ticket against recent issues for duplicates."""
         ticket = await self._jira.get_issue(issue_key)
         summary = ticket["summary"].lower()
+        board = self._settings.board_for_issue(issue_key)
 
-        jql = (
-            f'project = "{self._settings.jira_project_key}" '
-            f"AND key != {issue_key} "
-            f"ORDER BY created DESC"
-        )
+        jql = f'project = "{board.jira_project_key}" AND key != {issue_key} ORDER BY created DESC'
         recent = await self._jira.search_issues(jql, max_results=50)
 
         matches = []
         for issue in recent:
-            ratio = SequenceMatcher(
-                None, summary, issue["summary"].lower()
-            ).ratio()
+            ratio = SequenceMatcher(None, summary, issue["summary"].lower()).ratio()
             if ratio >= _DEDUP_THRESHOLD:
                 matches.append((issue["key"], ratio))
 
@@ -251,16 +258,30 @@ class TicketEnricher:
     async def process_backlog(
         self,
         limit: int = 10,
+        project: str | None = None,
     ) -> list[EnrichmentResult]:
-        """Find and enrich unprocessed backlog tickets."""
+        """Find and enrich unprocessed backlog tickets.
+
+        project filters to a single board; if omitted, fans out across all
+        configured boards and caps the combined result at limit.
+        """
         label = self._settings.jira_processed_label
-        jql = (
-            f'project = "{self._settings.jira_project_key}" '
-            f'AND status = "{self._settings.jira_intake_status}" '
-            f'AND labels not in ("{label}") '
-            f"ORDER BY created ASC"
-        )
-        tickets = await self._jira.search_issues(jql, max_results=limit)
+        if project is not None:
+            boards = [self._settings.get_board(project)]
+        else:
+            boards = list(self._settings.boards)
+
+        tickets: list[dict[str, Any]] = []
+        for board in boards:
+            jql = (
+                f'project = "{board.jira_project_key}" '
+                f'AND status = "{self._settings.jira_intake_status}" '
+                f'AND labels not in ("{label}") '
+                f"ORDER BY created ASC"
+            )
+            tickets.extend(await self._jira.search_issues(jql, max_results=limit))
+
+        tickets = tickets[:limit]
 
         results = []
         for ticket in tickets:
@@ -307,9 +328,7 @@ class TicketEnricher:
         raw_text = re.sub(r"\s*```$", "", raw_text)
         return json.loads(raw_text)
 
-    def _parse_analysis(
-        self, issue_key: str, data: dict[str, Any]
-    ) -> TicketAnalysis:
+    def _parse_analysis(self, issue_key: str, data: dict[str, Any]) -> TicketAnalysis:
         subtasks = [
             SubtaskSuggestion(summary=s["summary"], description=s.get("description", ""))
             for s in data.get("subtask_suggestions", [])
