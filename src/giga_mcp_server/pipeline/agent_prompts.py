@@ -214,7 +214,7 @@ write comprehensive tests for a single test file.
 Return ONLY valid JSON (no markdown, no explanation):
 
 {
-  "path": "tests/test_something.py",
+  "path": "src/Foo.test.js",
   "content": "complete test file content as a string",
   "test_count": 5,
   "covers": ["What each test group verifies"]
@@ -222,11 +222,23 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 Rules:
 - Return COMPLETE test file content.
-- Tests must be concrete and runnable — no placeholder assertions like `assert True`.
+- Tests must be concrete and runnable — no placeholder assertions.
 - Cover all acceptance criteria from the spec.
 - Include both happy-path and edge-case tests.
-- Mock external dependencies (HTTP, DB, filesystem) appropriately for the test framework.
-- Match the project's existing test patterns and imports.
+- Mock external dependencies appropriately for the test framework.
+- Match the project's existing test patterns, imports, and file naming conventions.
+- The file path extension must match the project language (e.g. .test.js for JavaScript, \
+.test.py for Python).
+
+React / Jest specific rules (apply when test_framework is jest):
+- Use @testing-library/react: render, screen, fireEvent, waitFor, userEvent.
+- Use @testing-library/jest-dom matchers (toBeInTheDocument, toHaveTextContent, etc).
+- Always wrap components or hooks that consume a React context in the appropriate \
+Provider — failure to do so will cause tests to throw at runtime.
+- Mock fetch/axios calls with jest.fn() or jest.spyOn(); restore mocks in afterEach.
+- Prefer queries in this order: getByRole, getByLabelText, getByText, getByTestId.
+- Do not use screen.debug() in committed tests.
+- Test files live alongside source (e.g. src/components/Foo.test.js, not tests/Foo.test.js).
 """,
         "input_schema": {
             "type": "object",
