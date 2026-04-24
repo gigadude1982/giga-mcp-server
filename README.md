@@ -1,6 +1,6 @@
 # giga-mcp-server *(codename: Bender)*
 
-<img src="bender.png" align="left" width="200" />
+<img src="bender.png" align="left" width="200" alt="Bender robot illustration for giga-mcp-server" />
 
 An MCP server that uses AI agents to enrich and autonomously implement JIRA tickets. Point it at a JIRA project and a GitHub repository and it will analyze tickets, enrich metadata, and — for tickets ready for implementation — plan, write, test, and open a pull request on GitHub entirely autonomously.
 
@@ -139,7 +139,6 @@ cp .env.example .env
 | `GIGA_JIRA_API_TOKEN`    | Atlassian API token            |
 | `GIGA_JIRA_PROJECT_KEY`  | JIRA project key (e.g., `PIT`) |
 | `GIGA_ANTHROPIC_API_KEY` | Anthropic API key for Claude   |
-| `GIGA_ANTHROPIC_MODEL`   | Claude model for enrichment (default: `claude-haiku-4-5-20251001`; pipeline always uses Sonnet) |
 
 ### Pipeline settings (required for `process_ticket`)
 
@@ -170,6 +169,7 @@ cp .env.example .env
 | `GIGA_JIRA_DEFAULT_PRIORITY`   | `Medium`  | Default priority when creating tickets                  |
 | `GIGA_JIRA_INTAKE_STATUS`      | `To Do`   | Status assigned to newly created tickets                |
 | `GIGA_JIRA_PROCESSED_LABEL`    | `ai-processed` | Label added to enriched tickets                    |
+ | `GIGA_ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001`     | Claude model for enrichment; pipeline always uses Sonnet |
 
 ### Repo pipeline config (optional)
 
