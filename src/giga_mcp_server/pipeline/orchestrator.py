@@ -145,11 +145,15 @@ class PipelineOrchestrator:
         existing_files = await self._github.list_files(
             branch=self._settings.github_base_branch
         )
-        # Fetch content of likely-affected files (best-effort)
-        relevant_contents = await self._fetch_relevant_files(
-            spec.get("affected_areas", []),
-            existing_files,
+        # Fetch content of likely-affected files and formatter configs concurrently
+        relevant_contents, formatter_configs = await asyncio.gather(
+            self._fetch_relevant_files(spec.get("affected_areas", []), existing_files),
+            self._fetch_formatter_configs(self._settings.github_base_branch),
         )
+        if formatter_configs:
+            config.coding_standards = (
+                f"{config.coding_standards}\n\nFormatter configs from repo:\n{formatter_configs}"
+            )
 
         plan_input = {
             "spec": spec,
@@ -193,6 +197,13 @@ class PipelineOrchestrator:
                 self._settings.github_base_branch,
                 default_max_retries=self._settings.pipeline_max_retries,
             )
+            formatter_configs = await self._fetch_formatter_configs(
+                self._settings.github_base_branch
+            )
+            if formatter_configs:
+                config.coding_standards = (
+                    f"{config.coding_standards}\n\nFormatter configs from repo:\n{formatter_configs}"
+                )
             await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"
@@ -428,6 +439,29 @@ class PipelineOrchestrator:
         return await _with_retry(
             lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
         )
+
+    async def _fetch_formatter_configs(self, branch: str) -> str:
+        """Fetch Prettier/ESLint/EditorConfig files from the repo root and return
+        them as a formatted string to append to coding_standards."""
+        config_files = [
+            ".prettierrc",
+            ".prettierrc.json",
+            ".prettierrc.js",
+            ".prettierrc.yaml",
+            ".prettierrc.yml",
+            "prettier.config.js",
+            ".eslintrc",
+            ".eslintrc.json",
+            ".eslintrc.js",
+            ".editorconfig",
+        ]
+        contents = await self._fetch_file_contents(config_files, branch)
+        if not contents:
+            return ""
+        sections = [
+            f"=== {name} ===\n{content}" for name, content in contents.items()
+        ]
+        return "\n\n".join(sections)
 
     async def _fetch_relevant_files(
         self, affected_areas: list[str], all_files: list[str]

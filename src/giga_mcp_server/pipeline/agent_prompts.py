@@ -186,6 +186,11 @@ component: `import styles from './Foo.module.css'` and reference classes as \
 `styles.className`. Never create a CSS module and leave it unimported.
 - If the test plan references data-testid attributes, you MUST add those attributes \
 to the corresponding JSX elements in the implementation (e.g. data-testid="footer-tagline").
+- CRITICAL: Your output will be committed directly without running a formatter. If \
+coding_standards includes a Prettier config, your code MUST already be formatted exactly \
+as Prettier would format it — correct line length, quote style, trailing commas, bracket \
+spacing, and JSX formatting. A Prettier lint error will fail the CI build. When in doubt, \
+break long lines and match the style of existing_content exactly.
 """,
         "input_schema": {
             "type": "object",
