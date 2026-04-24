@@ -31,7 +31,7 @@ export const BOARDS: BoardConfig[] = [
     boardId: 'pitchvault',
     jiraProjectKey: 'PIT',
     jiraUrl: 'https://pitchvault.atlassian.net',
-    jiraUsername: 'claude@pitchvault.co',
+    jiraUsername: 'admin@pitchvault.co',
     githubRepo: 'gigadude1982/pitchvault-react',
     githubBaseBranch: 'main',
     subdomain: 'mcp.pitchvault.co',
