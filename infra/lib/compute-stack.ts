@@ -45,9 +45,9 @@ export class ComputeStack extends cdk.Stack {
           hostedZone,
           ecrRepo: shared.ecrRepository,
           taskRole: shared.taskRole,
-          // Import the existing pool for gigacorp; new boards get their own pool.
+          // Import the existing pool for gigacorp-react; new boards get their own pool.
           existingCognitoUserPoolId:
-            board.boardId === 'gigacorp' ? COGNITO_USER_POOL_ID : undefined,
+            board.boardId === 'gigacorp-react' ? COGNITO_USER_POOL_ID : undefined,
         },
       );
 

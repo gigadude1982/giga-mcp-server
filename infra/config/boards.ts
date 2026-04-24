@@ -18,11 +18,11 @@ export interface BoardConfig {
 
 export const BOARDS: BoardConfig[] = [
   {
-    boardId: 'gigacorp',
+    boardId: 'gigacorp-react',
     jiraProjectKey: 'GIGA',
     jiraUrl: 'https://gigacorporation.atlassian.net',
-    jiraUsername: 'claude@gigacorp.co',
-    githubRepo: 'gigadude1982/giga-mcp-server',
+    jiraUsername: 'admin@gigacorp.co',
+    githubRepo: 'gigadude1982/gigacorp-react',
     githubBaseBranch: 'main',
     subdomain: 'mcp.gigacorp.co',
     createHostedZone: false, // gigacorp.co hosted zone already exists in Route 53
