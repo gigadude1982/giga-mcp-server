@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "giga-mcp-server"
-version = "0.5.14"
+version = "0.5.16"
 description = "MCP server with AI agents that enrich and process JIRA tickets"
 requires-python = ">=3.11"
 dependencies = [

@@ -186,6 +186,11 @@ component: `import styles from './Foo.module.css'` and reference classes as \
 `styles.className`. Never create a CSS module and leave it unimported.
 - If the test plan references data-testid attributes, you MUST add those attributes \
 to the corresponding JSX elements in the implementation (e.g. data-testid="footer-tagline").
+- CRITICAL: Your output will be committed directly without running a formatter. If \
+coding_standards includes a Prettier config, your code MUST already be formatted exactly \
+as Prettier would format it — correct line length, quote style, trailing commas, bracket \
+spacing, and JSX formatting. A Prettier lint error will fail the CI build. When in doubt, \
+break long lines and match the style of existing_content exactly.
 """,
         "input_schema": {
             "type": "object",
@@ -294,9 +299,10 @@ Missing required props will cause tests to fail or render undefined values.
     # ------------------------------------------------------------------
     "validator": {
         "system_prompt": """\
-You are a code reviewer specialising in correctness and test coverage. Given the \
-implementation files and test files produced by the autonomous pipeline, check \
-for coherence issues.
+You are a senior code reviewer acting as the last gate before a PR is opened. \
+The code you receive was written by an AI and will be committed directly — no \
+formatter, compiler, or test runner will execute before it lands. Your job is to \
+mentally simulate those tools and block anything that would cause CI to fail.
 
 Return ONLY valid JSON (no markdown, no explanation):
 
@@ -309,14 +315,42 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 If passed is false, issues must be non-empty. Issues are blocking; warnings are not.
 
-Check for:
-- Tests that import from paths that don't exist in the implementation
-- Acceptance criteria from the spec that have no corresponding test
-- Implementation that contradicts the spec requirements
-- Obvious bugs (off-by-one, wrong method signatures, missing return values)
-- Tests that only assert truthy/None without meaningful assertions
+## Blocking checks (set passed=false if any fail)
 
-Do NOT block on style preferences or nitpicks.
+### Build / compilation
+- Every import statement resolves to a file that exists in implementation_files \
+or is a known third-party package. Flag any import that references a path not \
+present in the implementation.
+- All variables, functions, and components referenced in the code are defined \
+before use (no undefined references).
+- All required props are passed when a component is used. No obviously missing \
+required arguments to functions.
+- No syntax errors: unclosed brackets, mismatched JSX tags, missing commas in \
+object literals, etc.
+
+### Formatter / linter (use coding_standards if provided)
+- If a Prettier config is present in coding_standards, mentally apply it. Flag \
+any line that would be reformatted: lines exceeding printWidth, wrong quote style, \
+missing/extra trailing commas, incorrect bracket spacing, or JSX that Prettier \
+would reflow. A Prettier violation will fail the CI build.
+- If an ESLint config is present, flag violations of its rules. Common blockers: \
+missing PropTypes definitions (react/prop-types), unused variables (no-unused-vars), \
+missing useEffect dependency arrays (react-hooks/exhaustive-deps).
+
+### Test coherence
+- Tests import only from paths present in implementation_files.
+- Every acceptance criterion in the spec has at least one corresponding test.
+- Implementation does not contradict the spec requirements.
+- Tests make meaningful assertions — not just truthy/None checks.
+
+### Logic
+- Obvious bugs: off-by-one errors, wrong method signatures, missing return values, \
+async functions called without await.
+
+## Non-blocking (warnings only)
+- Style preferences not enforced by the project's linter.
+- Minor naming inconsistencies that don't break the build.
+- Test coverage gaps beyond the acceptance criteria.
 """,
         "input_schema": {
             "type": "object",
@@ -331,6 +365,7 @@ Do NOT block on style preferences or nitpicks.
                     "type": "object",
                     "additionalProperties": {"type": "string"},
                 },
+                "coding_standards": {"type": "string"},
             },
         },
         "output_schema": {
