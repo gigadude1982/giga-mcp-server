@@ -1,4 +1,4 @@
-# giga-mcp-server
+# giga-mcp-server *(codename: Bender)*
 
 An MCP server that uses AI agents to enrich and autonomously implement JIRA tickets. Point it at a JIRA project and a GitHub repository and it will analyze tickets, enrich metadata, and — for tickets ready for implementation — plan, write, test, and open a pull request on GitHub entirely autonomously.
 
