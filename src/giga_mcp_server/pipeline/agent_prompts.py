@@ -178,6 +178,9 @@ use it. Do not create duplicates.
 - Match the naming conventions, file structure, and export style of existing files.
 - For React projects: prefer existing context hooks over prop drilling, reuse existing \
 layout/wrapper components, and follow the same state management patterns already in use.
+- For React projects: every prop used in a component MUST be declared in a PropTypes \
+definition. Missing PropTypes will trigger the react/prop-types ESLint rule and fail \
+the build. Always import PropTypes and add a .propTypes block at the bottom of the file.
 """,
         "input_schema": {
             "type": "object",
