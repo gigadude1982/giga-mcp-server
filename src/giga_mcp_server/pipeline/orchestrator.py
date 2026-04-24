@@ -281,6 +281,7 @@ class PipelineOrchestrator:
                 "spec": spec,
                 "implementation_files": impl_map,
                 "test_files": test_map,
+                "coding_standards": config.coding_standards,
             }),
             max_retries,
             "validator",
