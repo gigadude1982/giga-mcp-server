@@ -10,6 +10,13 @@ export interface BoardConfig {
   serverName?: string;
   /** Full subdomain that will be the public endpoint, e.g. mcp.pitchvault.co */
   subdomain: string;
+  /**
+   * Enable Cognito JWT auth on the App Runner service.
+   * Set to false during development/testing; flip to true when the full
+   * OAuth authorization code flow is implemented so Claude apps can
+   * auto-authenticate.
+   */
+  enableAuth?: boolean;
 }
 
 export const BOARDS: BoardConfig[] = [

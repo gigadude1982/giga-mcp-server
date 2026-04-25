@@ -42,6 +42,7 @@ export class GigaMcpServerStack extends cdk.Stack {
           instanceRoleArn: INSTANCE_ROLE_ARN,
           existingCognitoUserPoolId:
             board.boardId === 'gigacorp-react' ? COGNITO_USER_POOL_ID : undefined,
+          enableAuth: board.enableAuth,
         },
       );
     }

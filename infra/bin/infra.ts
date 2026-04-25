@@ -6,9 +6,12 @@ import { GigaMcpServerStack } from '../lib/giga-mcp-server-stack';
 
 const app = new cdk.App();
 
-new GigaMcpServerStack(app, 'GigaMcpServer', {
+const stackName = process.env.STACK_NAME ?? 'GigaMcpServer';
+
+new GigaMcpServerStack(app, stackName, {
   env: CDK_ENV,
   description: 'App Runner-based giga-mcp-server deployments — one per JIRA board',
+  stackName,
 });
 
 app.synth();

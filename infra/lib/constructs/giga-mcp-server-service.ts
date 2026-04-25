@@ -31,6 +31,8 @@ export interface GigaMcpServerServiceProps {
    * pool.  Omit for new boards — CDK will create a dedicated pool.
    */
   existingCognitoUserPoolId?: string;
+  /** Wire Cognito pool/client IDs into the container env vars to enable JWT auth. */
+  enableAuth?: boolean;
   /** App Runner CPU units; defaults to '256' (0.25 vCPU). */
   cpu?: string;
   /** App Runner memory in MB; defaults to '512' (0.5 GB). */
@@ -80,6 +82,7 @@ export class GigaMcpServerService extends Construct {
       instanceRoleArn,
       accessRoleArn,
       existingCognitoUserPoolId,
+      enableAuth = false,
       cpu = '256',
       memory = '512',
     } = props;
@@ -133,9 +136,11 @@ export class GigaMcpServerService extends Construct {
               { name: 'GIGA_JIRA_PROJECT_KEY', value: jiraProjectKey },
               { name: 'GIGA_GITHUB_REPO', value: githubRepo },
               { name: 'GIGA_GITHUB_BASE_BRANCH', value: githubBaseBranch },
-              { name: 'GIGA_COGNITO_USER_POOL_ID', value: this.userPool.userPoolId },
-              { name: 'GIGA_COGNITO_CLIENT_ID', value: this.userPoolClient.userPoolClientId },
-              { name: 'GIGA_PUBLIC_URL', value: `https://${subdomain}` },
+              ...(enableAuth ? [
+                { name: 'GIGA_COGNITO_USER_POOL_ID', value: this.userPool.userPoolId },
+                { name: 'GIGA_COGNITO_CLIENT_ID', value: this.userPoolClient.userPoolClientId },
+                { name: 'GIGA_PUBLIC_URL', value: `https://${subdomain}` },
+              ] : []),
             ],
             runtimeEnvironmentSecrets: [
               { name: 'GIGA_JIRA_API_TOKEN', value: ssmParamArn('jira-api-token') },
