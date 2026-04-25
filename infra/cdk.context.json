@@ -1,0 +1,14 @@
+{
+  "hosted-zone:account=138606625420:domainName=gigacorp.co:region=us-east-1": {
+    "Id": "/hostedzone/Z08385601B5HCX1AG6EO1",
+    "Name": "gigacorp.co."
+  },
+  "availability-zones:account=138606625420:region=us-east-1": [
+    "us-east-1a",
+    "us-east-1b",
+    "us-east-1c",
+    "us-east-1d",
+    "us-east-1e",
+    "us-east-1f"
+  ]
+}

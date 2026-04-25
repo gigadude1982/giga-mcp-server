@@ -1,0 +1,21 @@
+{
+  "version": "52.0.0",
+  "files": {
+    "21b1781877ca9b6e49d963f8a3e3fc82e1466b000522b5a4061d21e1fceac5e5": {
+      "displayName": "GigaMcpServerEcr Template",
+      "source": {
+        "path": "GigaMcpServerEcr.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "138606625420-us-east-1-db7f9cd1": {
+          "bucketName": "cdk-hnb659fds-assets-138606625420-us-east-1",
+          "objectKey": "21b1781877ca9b6e49d963f8a3e3fc82e1466b000522b5a4061d21e1fceac5e5.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::138606625420:role/cdk-hnb659fds-file-publishing-role-138606625420-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

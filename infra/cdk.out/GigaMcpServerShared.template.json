@@ -1,0 +1,81 @@
+{
+ "Description": "Shared resources: Cognito, IAM, Route 53 for giga-mcp-server",
+ "Resources": {
+  "HostedZonepitchvaultreact49BDA66F": {
+   "Type": "AWS::Route53::HostedZone",
+   "Properties": {
+    "Name": "pitchvault.co."
+   },
+   "Metadata": {
+    "aws:cdk:path": "GigaMcpServerShared/HostedZone-pitchvault-react/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/0XHsQ6CMBAA0G9hb0+omrC7uElwczGlPZMC9kzvTgbCvxvj4PTyHLhDA3XlF7YhTnZOA6xX8WEyPTJpCWj8wvdCKnjcw9rpMKdwJhaMN8poTo/83/btReWlsplMEWHk3btpwdXQViOnZItmSU+E/ucHCBuy1IEAAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "GigaMcpServerShared/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "NameServerspitchvaultreact": {
+   "Description": "Route 53 name servers for pitchvault.co — register these with your domain registrar",
+   "Value": {
+    "Fn::Join": [
+     ", ",
+     {
+      "Fn::GetAtt": [
+       "HostedZonepitchvaultreact49BDA66F",
+       "NameServers"
+      ]
+     }
+    ]
+   }
+  },
+  "ExportsOutputRefHostedZonepitchvaultreact49BDA66F72DF9DC1": {
+   "Value": {
+    "Ref": "HostedZonepitchvaultreact49BDA66F"
+   },
+   "Export": {
+    "Name": "GigaMcpServerShared:ExportsOutputRefHostedZonepitchvaultreact49BDA66F72DF9DC1"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
