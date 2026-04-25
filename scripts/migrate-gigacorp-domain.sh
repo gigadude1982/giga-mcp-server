@@ -90,7 +90,7 @@ phase_validation() {
     aws apprunner associate-custom-domain --region "$REGION" \
       --service-arn "$new_arn" \
       --domain-name "$DOMAIN" \
-      --enable-www-subdomain false \
+      --no-enable-www-subdomain \
       --no-cli-pager > /dev/null
     echo "Domain association initiated — waiting a moment for validation records..."
     sleep 5
