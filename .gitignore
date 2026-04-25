@@ -18,3 +18,8 @@ giga.log
 
 # OS
 .DS_Store
+
+# CDK
+infra/node_modules/
+infra/cdk.out/
+infra/cdk.context.json
