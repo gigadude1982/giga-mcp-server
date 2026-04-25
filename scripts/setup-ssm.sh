@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Creates or updates SSM SecureString parameters for all boards.
 # Reads secrets from .env.<boardId> files in the repo root.
-# Usage: ./scripts/setup-ssm.sh [--board gigacorp|pitchvault]
+# Usage: ./scripts/setup-ssm.sh [--board <boardId>]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,17 +11,15 @@ BOARD_FILTER="${2:-}"  # optional: --board <id>
 # Helpers
 # ---------------------------------------------------------------------------
 
-load_env() {
+# Read a single variable value from an env file, stripping inline comments.
+read_env_var() {
   local env_file="$1"
-  if [[ ! -f "$env_file" ]]; then
-    echo "ERROR: $env_file not found" >&2
-    exit 1
-  fi
-  # Export non-comment, non-blank lines, stripping inline comments
-  set -a
-  # shellcheck disable=SC1090
-  source <(grep -E '^[A-Z_]+=.' "$env_file" | sed 's/[[:space:]]*#.*$//')
-  set +a
+  local var_name="$2"
+  grep -E "^${var_name}=" "$env_file" \
+    | tail -1 \
+    | cut -d= -f2- \
+    | sed 's/[[:space:]]*#.*$//' \
+    | xargs  # trim surrounding whitespace/quotes
 }
 
 put_param() {
@@ -45,13 +43,20 @@ setup_board() {
   local board_id="$1"
   local env_file="$REPO_ROOT/.env.$board_id"
 
+  if [[ ! -f "$env_file" ]]; then
+    echo "ERROR: $env_file not found" >&2
+    exit 1
+  fi
+
   echo ""
   echo "── $board_id ──────────────────────────────────────────"
-  load_env "$env_file"
 
-  put_param "/giga-mcp-server/$board_id/jira-api-token"   "${GIGA_JIRA_API_TOKEN:-}"
-  put_param "/giga-mcp-server/$board_id/anthropic-api-key" "${GIGA_ANTHROPIC_API_KEY:-}"
-  put_param "/giga-mcp-server/$board_id/github-token"     "${GIGA_GITHUB_TOKEN:-}"
+  put_param "/giga-mcp-server/$board_id/jira-api-token" \
+    "$(read_env_var "$env_file" GIGA_JIRA_API_TOKEN)"
+  put_param "/giga-mcp-server/$board_id/anthropic-api-key" \
+    "$(read_env_var "$env_file" GIGA_ANTHROPIC_API_KEY)"
+  put_param "/giga-mcp-server/$board_id/github-token" \
+    "$(read_env_var "$env_file" GIGA_GITHUB_TOKEN)"
 }
 
 # ---------------------------------------------------------------------------
