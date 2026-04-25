@@ -174,6 +174,8 @@ class PipelineOrchestrator:
             state.stage = "awaiting_approval"
             comment = _format_plan_comment(ticket_key, spec, plan)
             await add_pipeline_comment(self._jira, ticket_key, comment)
+            ok = await transition_ticket(self._jira, ticket_key, "In Plan Review")
+            logger.info("jira_transition", ticket=ticket_key, status="In Plan Review", ok=ok)
             logger.info("pipeline_awaiting_approval", ticket=ticket_key)
             # The pipeline pauses here; resumption requires calling run_from_plan()
             return
