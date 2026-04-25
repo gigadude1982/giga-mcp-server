@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     pipeline_max_retries: int = 3
 
     # Server
+    server_name: str = "giga-mcp-server"
     transport: str = "stdio"  # "stdio" or "streamable-http"
     host: str = "0.0.0.0"
     port: int = 8000

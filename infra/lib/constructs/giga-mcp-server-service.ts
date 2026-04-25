@@ -13,8 +13,10 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 
 export interface GigaMcpServerServiceProps {
-  /** Short slug used in resource names and SSM paths, e.g. 'pitchvault', 'gigacorp' */
+  /** Short slug used in resource names and SSM paths, e.g. 'pitchvault-react', 'gigacorp-react' */
   boardId: string;
+  /** MCP server name shown in Claude Desktop and get_server_info; defaults to boardId */
+  serverName?: string;
   jiraProjectKey: string;
   jiraUrl: string;
   jiraUsername: string;
@@ -90,6 +92,7 @@ export class GigaMcpServerService extends Construct {
 
     const {
       boardId,
+      serverName = boardId,
       jiraProjectKey,
       jiraUrl,
       jiraUsername,
@@ -217,6 +220,7 @@ export class GigaMcpServerService extends Construct {
         logGroup,
       }),
       environment: {
+        GIGA_SERVER_NAME: serverName,
         GIGA_TRANSPORT: 'streamable-http',
         GIGA_HOST: '0.0.0.0',
         GIGA_PORT: '8000',

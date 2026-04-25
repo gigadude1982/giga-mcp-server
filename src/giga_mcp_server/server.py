@@ -106,7 +106,8 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 _VERSION = importlib.metadata.version("giga-mcp-server")
 
-mcp = FastMCP("giga-mcp-server", lifespan=lifespan, host="0.0.0.0", port=8000)
+_settings = Settings()
+mcp = FastMCP(_settings.server_name, lifespan=lifespan, host=_settings.host, port=_settings.port)
 mcp._mcp_server.version = _VERSION
 
 
@@ -125,7 +126,7 @@ async def get_server_info(ctx: Context = None) -> str:
     app = _app(ctx)
     s = app.settings
     lines = [
-        "**Name:** giga-mcp-server",
+        f"**Name:** {s.server_name}",
         f"**Version:** {_VERSION}",
         f"**Transport:** {s.transport}",
         f"**JIRA URL:** {s.jira_url}",

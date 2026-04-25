@@ -36,6 +36,7 @@ export class ComputeStack extends cdk.Stack {
         `GigaMcpService-${board.boardId}`,
         {
           boardId: board.boardId,
+          serverName: board.serverName,
           jiraProjectKey: board.jiraProjectKey,
           jiraUrl: board.jiraUrl,
           jiraUsername: board.jiraUsername,
