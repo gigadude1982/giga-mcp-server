@@ -7,6 +7,8 @@ build/
 *.egg
 
 .env
+.env.*
+!.env.example
 .venv/
 giga.log
 
