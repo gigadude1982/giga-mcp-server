@@ -71,32 +71,35 @@ phase_disassociate() {
 }
 
 phase_validation() {
-  local records
-  records=$(stack_output "ServicegigacorpreactCertificateValidationRecords")
-  if [[ -z "$records" || "$records" == "None" ]]; then
-    echo "No validation records in stack output — has cdk deploy completed?"
+  local new_arn
+  new_arn=$(service_arn "$NEW_SERVICE_NAME")
+  if [[ "$new_arn" == "None" || -z "$new_arn" ]]; then
+    echo "New service '$NEW_SERVICE_NAME' not found — has cdk deploy completed?"
     exit 1
   fi
 
-  echo "Reading validation records from stack output..."
-  echo "Records (raw): $records"
-  echo ""
-  echo "Note: App Runner returns these as a list of {Name,Value,Type,Status} objects."
-  echo "Parse and create them in Route 53 manually via the AWS console, or use:"
-  echo ""
-  echo "  aws apprunner describe-custom-domains --region $REGION \\"
-  echo "    --service-arn \$(./scripts/migrate-gigacorp-domain.sh _new-arn) \\"
-  echo "    --query 'CustomDomains[0].CertificateValidationRecords'"
-  echo ""
-  echo "Then for each record (Type=CNAME, Name=..., Value=...) run:"
-  echo ""
-  echo "  aws route53 change-resource-record-sets --hosted-zone-id $HOSTED_ZONE_ID \\"
-  echo "    --change-batch '{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"<name>\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"<value>\"}]}}]}'"
-  echo ""
-  echo "Or, easier — auto-add via:"
+  # Associate the custom domain if not already associated.
+  local assoc_status
+  assoc_status=$(aws apprunner describe-custom-domains --region "$REGION" \
+    --service-arn "$new_arn" \
+    --query "CustomDomains[?DomainName=='$DOMAIN'].Status | [0]" \
+    --output text 2>/dev/null || echo "None")
 
-  local new_arn
-  new_arn=$(service_arn "$NEW_SERVICE_NAME")
+  if [[ "$assoc_status" == "None" || -z "$assoc_status" ]]; then
+    echo "Associating $DOMAIN with new service..."
+    aws apprunner associate-custom-domain --region "$REGION" \
+      --service-arn "$new_arn" \
+      --domain-name "$DOMAIN" \
+      --enable-www-subdomain false \
+      --no-cli-pager > /dev/null
+    echo "Domain association initiated — waiting a moment for validation records..."
+    sleep 5
+  else
+    echo "Domain already associated (status: $assoc_status)"
+  fi
+
+  # Fetch and upsert validation CNAMEs into Route 53.
+  echo "Adding certificate validation records to Route 53..."
   aws apprunner describe-custom-domains --region "$REGION" \
     --service-arn "$new_arn" \
     --query 'CustomDomains[0].CertificateValidationRecords' --output json \

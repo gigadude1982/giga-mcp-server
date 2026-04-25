@@ -167,17 +167,8 @@ export class GigaMcpServerService extends Construct {
       ],
     });
 
-    // ── Custom domain ───────────────────────────────────────────────────────
-    // L1 raw CfnResource — aws-cdk-lib doesn't ship CfnCustomDomainAssociation
-    // for App Runner yet, so we use the underlying CloudFormation type directly.
-    const domainAssoc = new cdk.CfnResource(this, 'CustomDomain', {
-      type: 'AWS::AppRunner::CustomDomainAssociation',
-      properties: {
-        DomainName: subdomain,
-        ServiceArn: this.service.attrServiceArn,
-        EnableWWWSubdomain: false,
-      },
-    });
+    // Custom domain association is not a CloudFormation resource type — managed
+    // post-deploy via scripts/migrate-gigacorp-domain.sh (phase: validation, cutover).
 
     this.endpointUrl = `https://${subdomain}`;
 
@@ -188,23 +179,10 @@ export class GigaMcpServerService extends Construct {
     });
 
     new cdk.CfnOutput(this, 'DefaultUrl', {
-      description: `App Runner default URL — set this as the CNAME target for ${subdomain}`,
+      description: `App Runner default URL — use as CNAME target for ${subdomain} after domain association`,
       value: cdk.Fn.sub('https://${ServiceUrl}', {
         ServiceUrl: this.service.attrServiceUrl,
       }),
-    });
-
-    new cdk.CfnOutput(this, 'EndpointUrl', {
-      description: `Public endpoint for the ${boardId} giga-mcp-server deployment`,
-      value: this.endpointUrl,
-    });
-
-    new cdk.CfnOutput(this, 'CertificateValidationRecords', {
-      description: `Certificate validation CNAMEs to add to ${subdomain.split('.').slice(-2).join('.')} DNS — once added, App Runner issues the cert and the custom domain becomes active`,
-      value: cdk.Fn.join(
-        ' | ',
-        [domainAssoc.getAtt('CertificateValidationRecords').toString()],
-      ),
     });
 
     new cdk.CfnOutput(this, 'CognitoUserPoolId', {
