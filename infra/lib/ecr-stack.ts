@@ -16,38 +16,7 @@ export class EcrStack extends cdk.Stack {
       ECR_REPO_NAME,
     );
 
-    // Apply lifecycle rules via an escape-hatch CfnRepository overlay so that
-    // we can add policy without replacing the imported resource.
-    // The lifecycle policy below keeps the 10 most-recent tagged images and
-    // expires all untagged images after 7 days.
-    new ecr.CfnLifecyclePolicy(this, 'GigaMcpServerLifecyclePolicy', {
-      repositoryName: ECR_REPO_NAME,
-      lifecyclePolicyText: JSON.stringify({
-        rules: [
-          {
-            rulePriority: 1,
-            description: 'Keep last 10 tagged images',
-            selection: {
-              tagStatus: 'tagged',
-              tagPrefixList: [''],
-              countType: 'imageCountMoreThan',
-              countNumber: 10,
-            },
-            action: { type: 'expire' },
-          },
-          {
-            rulePriority: 2,
-            description: 'Expire untagged images after 7 days',
-            selection: {
-              tagStatus: 'untagged',
-              countType: 'sinceImagePushed',
-              countUnit: 'days',
-              countNumber: 7,
-            },
-            action: { type: 'expire' },
-          },
-        ],
-      }),
-    });
+    // Lifecycle rules can be added manually via the console or CLI since
+    // CDK cannot attach a lifecycle policy to an imported (fromRepositoryName) repository.
   }
 }
