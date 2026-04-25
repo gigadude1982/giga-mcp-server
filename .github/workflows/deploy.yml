@@ -11,7 +11,6 @@ concurrency:
 env:
   AWS_REGION: us-east-1
   ECR_REPO: giga-mcp-server
-  APP_NAME: giga-mcp-server
 
 jobs:
   test:
@@ -47,47 +46,69 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPO:latest .
+          docker build --platform linux/amd64 \
+            -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPO:latest .
           docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPO:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        id: build
 
-      - name: Update App Runner service
+      - name: Wait for App Runner deployments
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          SERVICES=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?starts_with(ServiceName, 'giga-mcp-')].ServiceArn" \
+            --output text --region $AWS_REGION)
+
+          if [ -z "$SERVICES" ]; then
+            echo "No giga-mcp-* App Runner services found — skipping deployment wait"
+            exit 0
+          fi
+
+          echo "Waiting for auto-deployment on services:"
+          for ARN in $SERVICES; do
+            NAME=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query 'Service.ServiceName' --output text --region $AWS_REGION)
+            echo "  $NAME"
+          done
+
+          # Poll until all services are running (not deploying)
+          TIMEOUT=600
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            ALL_RUNNING=true
+            for ARN in $SERVICES; do
+              STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+                --query 'Service.Status' --output text --region $AWS_REGION)
+              if [ "$STATUS" != "RUNNING" ]; then
+                ALL_RUNNING=false
+              fi
+            done
+            if $ALL_RUNNING; then
+              echo "All services running."
+              break
+            fi
+            sleep 15
+            ELAPSED=$((ELAPSED + 15))
+          done
+
+          if ! $ALL_RUNNING; then
+            echo "::warning::Timed out waiting for deployments — check App Runner console"
+          fi
+
+      - name: Deployment summary
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          SERVICE_ARN=$(aws apprunner list-services \
-            --query "ServiceSummaryList[?ServiceName=='$APP_NAME'].ServiceArn" \
-            --output text --region $AWS_REGION)
-
-          if [ -z "$SERVICE_ARN" ]; then
-            echo "::error::App Runner service '$APP_NAME' not found"
-            exit 1
-          fi
-
-          # Get existing access role ARN
-          ACCESS_ROLE=$(aws apprunner describe-service \
-            --service-arn "$SERVICE_ARN" \
-            --query 'Service.SourceConfiguration.AuthenticationConfiguration.AccessRoleArn' \
-            --output text --region $AWS_REGION)
-
-          aws apprunner update-service \
-            --service-arn "$SERVICE_ARN" \
-            --source-configuration "{
-              \"ImageRepository\": {
-                \"ImageIdentifier\": \"$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG\",
-                \"ImageRepositoryType\": \"ECR\",
-                \"ImageConfiguration\": {
-                  \"Port\": \"8000\"
-                }
-              },
-              \"AutoDeploymentsEnabled\": false,
-              \"AuthenticationConfiguration\": {
-                \"AccessRoleArn\": \"$ACCESS_ROLE\"
-              }
-            }" \
-            --region $AWS_REGION
-
           echo "### Deployed :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Service:** $SERVICE_ARN" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Services:**" >> $GITHUB_STEP_SUMMARY
+          aws apprunner list-services \
+            --query "ServiceSummaryList[?starts_with(ServiceName, 'giga-mcp-')].[ServiceName,ServiceUrl]" \
+            --output text --region $AWS_REGION | while read NAME URL; do
+            echo "- $NAME: https://$URL" >> $GITHUB_STEP_SUMMARY
+          done
