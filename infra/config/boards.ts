@@ -28,7 +28,7 @@ export const BOARDS: BoardConfig[] = [
     createHostedZone: false, // gigacorp.co hosted zone already exists in Route 53
   },
   {
-    boardId: 'pitchvault',
+    boardId: 'pitchvault-react',
     jiraProjectKey: 'PIT',
     jiraUrl: 'https://pitchvault.atlassian.net',
     jiraUsername: 'admin@pitchvault.co',

@@ -64,7 +64,7 @@ if [[ -n "$BOARD_FILTER" ]]; then
   setup_board "$BOARD_FILTER"
 else
   setup_board "gigacorp-react"
-  setup_board "pitchvault"
+  setup_board "pitchvault-react"
 fi
 
 echo ""
