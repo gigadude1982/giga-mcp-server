@@ -342,9 +342,9 @@ class PipelineOrchestrator:
         state.pr_url = pr.url
         state.pr_number = pr.number
 
-        # ── Transition Jira → In Review ──────────────────────────────────
-        ok = await transition_ticket(self._jira, ticket_key, "In Review")
-        logger.info("jira_transition", ticket=ticket_key, status="In Review", ok=ok)
+        # ── Transition Jira → In Code Review ─────────────────────────────
+        ok = await transition_ticket(self._jira, ticket_key, "In Code Review")
+        logger.info("jira_transition", ticket=ticket_key, status="In Code Review", ok=ok)
         await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
 
         # ── Poll CI ──────────────────────────────────────────────────────
