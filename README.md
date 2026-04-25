@@ -301,4 +301,4 @@ src/giga_mcp_server/
 
 ## License
 
-Private repository.
+MIT © 2026 Dalton B. Mangrum — see [LICENSE](LICENSE).
