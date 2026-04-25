@@ -186,6 +186,10 @@ component: `import styles from './Foo.module.css'` and reference classes as \
 `styles.className`. Never create a CSS module and leave it unimported.
 - If the test plan references data-testid attributes, you MUST add those attributes \
 to the corresponding JSX elements in the implementation (e.g. data-testid="footer-tagline").
+- If validator_feedback is present, your PRIMARY job is to fix every issue listed \
+before anything else. Each item is a blocking problem from a previous attempt that \
+caused the build, tests, or linter to fail. Address every single one explicitly — \
+do not skip any, and do not introduce new issues while fixing them.
 - CRITICAL: Your output will be committed directly without running a formatter. If \
 coding_standards includes a Prettier config, your code MUST already be formatted exactly \
 as Prettier would format it — correct line length, quote style, trailing commas, bracket \
@@ -217,6 +221,11 @@ unnecessary. Adding it will trigger the no-unused-vars ESLint rule and fail the 
                     "additionalProperties": {"type": "string"},
                 },
                 "coding_standards": {"type": "string"},
+                "validator_feedback": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Blocking issues from a previous validation attempt to fix.",
+                },
             },
         },
         "output_schema": {
@@ -276,6 +285,9 @@ Missing required props will cause tests to fail or render undefined values.
 JSX transform (React 17+). Check implementation_contents — if no file imports React \
 directly, the project uses the automatic transform and the import is an unused variable \
 that will fail the no-unused-vars ESLint rule.
+- If validator_feedback is present, your PRIMARY job is to fix every issue listed \
+before anything else. Each item is a blocking problem from a previous attempt. \
+Address every single one explicitly.
 """,
         "input_schema": {
             "type": "object",
@@ -292,6 +304,11 @@ that will fail the no-unused-vars ESLint rule.
                 },
                 "existing_test_content": {"type": "string"},
                 "coding_standards": {"type": "string"},
+                "validator_feedback": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Blocking issues from a previous validation attempt to fix.",
+                },
             },
         },
         "output_schema": {

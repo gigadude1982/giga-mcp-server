@@ -319,6 +319,58 @@ async def update_ticket_status(issue_key: str, status: str, ctx: Context = None)
 
 
 @mcp.tool()
+async def add_comment(issue_key: str, body: str, ctx: Context = None) -> str:
+    """Add a comment to a JIRA ticket.
+
+    Args:
+        issue_key: The JIRA issue key, e.g. PIT-42.
+        body: The comment text (plain text or Markdown).
+    """
+    app = _app(ctx)
+    success = await app.jira_client.add_comment(issue_key, body)
+    if success:
+        return f"Comment added to {issue_key}."
+    return f"Failed to add comment to {issue_key}."
+
+
+@mcp.tool()
+async def edit_ticket(
+    issue_key: str,
+    summary: str | None = None,
+    description: str | None = None,
+    priority: str | None = None,
+    labels: list[str] | None = None,
+    ctx: Context = None,
+) -> str:
+    """Edit fields on a JIRA ticket.
+
+    Args:
+        issue_key:   The JIRA issue key, e.g. PIT-42.
+        summary:     New summary/title for the ticket.
+        description: New description (plain text).
+        priority:    New priority (e.g. 'High', 'Medium', 'Low').
+        labels:      Replace the ticket's labels with this list.
+    """
+    app = _app(ctx)
+    fields: dict = {}
+    if summary is not None:
+        fields["summary"] = summary
+    if description is not None:
+        fields["description"] = description
+    if priority is not None:
+        fields["priority"] = {"name": priority}
+    if labels is not None:
+        fields["labels"] = labels
+    if not fields:
+        return "No fields specified — nothing to update."
+    success = await app.jira_client.update_issue(issue_key, fields)
+    if success:
+        updated = ", ".join(fields.keys())
+        return f"Updated {issue_key}: {updated}."
+    return f"Failed to update {issue_key}."
+
+
+@mcp.tool()
 async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
     """Check a JIRA ticket against recent issues for potential duplicates.
 

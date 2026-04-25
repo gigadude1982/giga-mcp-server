@@ -174,6 +174,8 @@ class PipelineOrchestrator:
             state.stage = "awaiting_approval"
             comment = _format_plan_comment(ticket_key, spec, plan)
             await add_pipeline_comment(self._jira, ticket_key, comment)
+            ok = await transition_ticket(self._jira, ticket_key, "In Plan Review")
+            logger.info("jira_transition", ticket=ticket_key, status="In Plan Review", ok=ok)
             logger.info("pipeline_awaiting_approval", ticket=ticket_key)
             # The pipeline pauses here; resumption requires calling run_from_plan()
             return
@@ -232,12 +234,11 @@ class PipelineOrchestrator:
         state.branch = branch_name
         logger.info("branch_created", branch=branch_name, ticket=ticket_key)
 
-        # ── Transition Jira → In Progress ────────────────────────────────
-        ok = await transition_ticket(self._jira, ticket_key, "In Progress")
-        logger.info("jira_transition", ticket=ticket_key, status="In Progress", ok=ok)
+        # ── Transition Jira → In Development ─────────────────────────────
+        ok = await transition_ticket(self._jira, ticket_key, "In Development")
+        logger.info("jira_transition", ticket=ticket_key, status="In Development", ok=ok)
 
-        # ── Stage 3: Implement + Test (parallel) ─────────────────────────
-        state.stage = "implementing"
+        # ── Stage 3 + 4: Implement → Validate (with feedback loop) ──────
         impl_files = [f for f in plan.get("files_to_modify", [])]
         test_file_specs = plan.get("test_files", [])
 
@@ -248,50 +249,82 @@ class PipelineOrchestrator:
             branch=self._settings.github_base_branch,
         )
 
-        # Build implementer tasks
-        impl_tasks = [
-            self._run_implementer(f, plan, spec, existing_contents, config, max_retries)
-            for f in impl_files
-        ]
-        # Build test writer tasks
-        test_tasks = [
-            self._run_test_writer(t, spec, existing_contents, config, max_retries)
-            for t in test_file_specs
-        ]
+        validation: dict = {}
+        impl_outputs: list = []
+        test_outputs: list = []
+        validator_feedback: list[str] = []
 
-        results = await asyncio.gather(*impl_tasks, *test_tasks)
-        impl_outputs = list(results[: len(impl_tasks)])
-        test_outputs = list(results[len(impl_tasks):])
+        for attempt in range(1, max_retries + 1):
+            state.stage = "implementing"
+            logger.info(
+                "implementation_attempt",
+                ticket=ticket_key,
+                attempt=attempt,
+                max=max_retries,
+            )
 
-        all_impl_outputs = impl_outputs + test_outputs
-        logger.info(
-            "stage_complete",
-            stage="implementing",
-            ticket=ticket_key,
-            files=len(all_impl_outputs),
-        )
+            impl_tasks = [
+                self._run_implementer(
+                    f, plan, spec, existing_contents, config, max_retries,
+                    validator_feedback=validator_feedback,
+                )
+                for f in impl_files
+            ]
+            test_tasks = [
+                self._run_test_writer(
+                    t, spec, existing_contents, config, max_retries,
+                    validator_feedback=validator_feedback,
+                )
+                for t in test_file_specs
+            ]
 
-        # ── Stage 4: Validate ────────────────────────────────────────────
-        state.stage = "validator"
-        impl_map = {o["path"]: o["content"] for o in impl_outputs}
-        test_map = {o["path"]: o["content"] for o in test_outputs}
+            results = await asyncio.gather(*impl_tasks, *test_tasks)
+            impl_outputs = list(results[: len(impl_tasks)])
+            test_outputs = list(results[len(impl_tasks):])
 
-        validation = await _with_retry(
-            lambda: self._runner.run("validator", {
-                "spec": spec,
-                "implementation_files": impl_map,
-                "test_files": test_map,
-                "coding_standards": config.coding_standards,
-            }),
-            max_retries,
-            "validator",
-        )
+            logger.info(
+                "stage_complete",
+                stage="implementing",
+                ticket=ticket_key,
+                files=len(impl_outputs) + len(test_outputs),
+                attempt=attempt,
+            )
+
+            # ── Stage 4: Validate ─────────────────────────────────────────
+            state.stage = "validator"
+            impl_map = {o["path"]: o["content"] for o in impl_outputs}
+            test_map = {o["path"]: o["content"] for o in test_outputs}
+
+            validation = await _with_retry(
+                lambda: self._runner.run("validator", {
+                    "spec": spec,
+                    "implementation_files": impl_map,
+                    "test_files": test_map,
+                    "coding_standards": config.coding_standards,
+                }),
+                max_retries,
+                "validator",
+            )
+
+            if validation.get("passed"):
+                logger.info(
+                    "stage_complete", stage="validator", ticket=ticket_key, attempt=attempt
+                )
+                break
+
+            validator_feedback = validation.get("issues", [])
+            logger.warning(
+                "validation_failed_retrying",
+                ticket=ticket_key,
+                attempt=attempt,
+                issues=validator_feedback,
+            )
 
         if not validation.get("passed"):
             issues = validation.get("issues", [])
-            raise _HaltError(f"Validation failed: {'; '.join(issues)}")
+            raise _HaltError(f"Validation failed after {max_retries} attempts: {'; '.join(issues)}")
 
-        logger.info("stage_complete", stage="validator", ticket=ticket_key)
+        all_impl_outputs = impl_outputs + test_outputs
 
         # ── Stage 5: PR Minter ───────────────────────────────────────────
         state.stage = "pr_minter"
@@ -340,9 +373,9 @@ class PipelineOrchestrator:
         state.pr_url = pr.url
         state.pr_number = pr.number
 
-        # ── Transition Jira → In Review ──────────────────────────────────
-        ok = await transition_ticket(self._jira, ticket_key, "In Review")
-        logger.info("jira_transition", ticket=ticket_key, status="In Review", ok=ok)
+        # ── Transition Jira → In Code Review ─────────────────────────────
+        ok = await transition_ticket(self._jira, ticket_key, "In Code Review")
+        logger.info("jira_transition", ticket=ticket_key, status="In Code Review", ok=ok)
         await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
 
         # ── Poll CI ──────────────────────────────────────────────────────
@@ -397,9 +430,9 @@ class PipelineOrchestrator:
         existing_contents: dict[str, str],
         config: RepoConfig,
         max_retries: int,
+        validator_feedback: list[str] | None = None,
     ) -> dict[str, Any]:
         path = file_spec["path"]
-        # Provide related files as context (exclude the file being implemented)
         related = {k: v for k, v in existing_contents.items() if k != path}
 
         input_data = {
@@ -412,6 +445,9 @@ class PipelineOrchestrator:
             "related_files": related,
             "coding_standards": config.coding_standards,
         }
+        if validator_feedback:
+            input_data["validator_feedback"] = validator_feedback
+
         return await _with_retry(
             lambda: self._runner.run("implementer", input_data), max_retries, f"implementer:{path}"
         )
@@ -423,6 +459,7 @@ class PipelineOrchestrator:
         existing_contents: dict[str, str],
         config: RepoConfig,
         max_retries: int,
+        validator_feedback: list[str] | None = None,
     ) -> dict[str, Any]:
         path = test_spec["path"]
         input_data = {
@@ -437,6 +474,9 @@ class PipelineOrchestrator:
             "existing_test_content": existing_contents.get(path, ""),
             "coding_standards": config.coding_standards,
         }
+        if validator_feedback:
+            input_data["validator_feedback"] = validator_feedback
+
         return await _with_retry(
             lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
         )

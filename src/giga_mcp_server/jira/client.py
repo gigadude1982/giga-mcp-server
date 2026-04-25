@@ -99,8 +99,43 @@ class JiraClient:
             logger.exception("add_comment_error", issue_key=issue_key)
             return False
 
+    async def _ensure_status_exists(self, status_name: str) -> bool:
+        """Create a JIRA status if it doesn't already exist.
+
+        Uses the Jira Cloud statuses API. The status is created in the
+        IN_PROGRESS category so it appears in the active work swim lane.
+        Note: creating the status does not automatically add it to a project
+        workflow — a JIRA admin must add it to the relevant workflow transition
+        for it to become available as a transition target.
+        """
+        try:
+            existing = await asyncio.to_thread(
+                self._jira.get, "/rest/api/3/statuses"
+            )
+            if any(
+                s.get("name", "").lower() == status_name.lower()
+                for s in (existing if isinstance(existing, list) else [])
+            ):
+                return True  # already exists
+
+            await asyncio.to_thread(
+                self._jira.post,
+                "/rest/api/3/statuses",
+                json={"statuses": [{"name": status_name, "statusCategory": "IN_PROGRESS"}]},
+            )
+            logger.info("jira_status_created", status=status_name)
+            return True
+        except Exception:
+            logger.warning("jira_status_create_failed", status=status_name)
+            return False
+
     async def transition_issue(self, issue_key: str, status: str) -> bool:
-        """Transition a JIRA issue to a new status."""
+        """Transition a JIRA issue to a new status.
+
+        If the transition is not available, attempts to create the status via
+        the JIRA API as a safety net, then logs guidance for the admin to wire
+        it into the project workflow.
+        """
         try:
             transitions = await asyncio.to_thread(
                 self._jira.get_issue_transitions, issue_key
@@ -116,6 +151,15 @@ class JiraClient:
                     issue_key=issue_key,
                     target=status,
                     available=available,
+                )
+                # Attempt to create the status so it exists in JIRA — a project
+                # admin still needs to add it to the workflow transition for it
+                # to become available as a transition target.
+                await self._ensure_status_exists(status)
+                logger.warning(
+                    "transition_skipped_add_to_workflow",
+                    status=status,
+                    hint=f"Add '{status}' to the project workflow in JIRA admin to enable this transition",
                 )
                 return False
 

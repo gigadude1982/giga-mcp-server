@@ -81,6 +81,8 @@ process_ticket(PIT-42, approve_plan=True)
 | `get_ticket`           | Fetch and display full details of a JIRA ticket                   |
 | `list_backlog`         | List tickets filtered by status (pass `"All"` for every status)  |
 | `update_ticket_status` | Transition a JIRA ticket to a new status                          |
+| `edit_ticket`          | Edit summary, description, priority, or labels on a ticket        |
+| `add_comment`          | Add a comment to a JIRA ticket                                    |
 | `find_duplicates`      | Check a ticket against recent issues for duplicates               |
 | `get_server_info`      | Return server name, version, and runtime config                   |
 
