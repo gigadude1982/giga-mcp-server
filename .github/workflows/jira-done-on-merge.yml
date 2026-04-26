@@ -1,0 +1,72 @@
+name: Mark JIRA ticket Done on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  jira-done:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract JIRA ticket key from branch name
+        id: ticket
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          # Match patterns like auto/pit-42, auto/giga-3, feature/PIT-42, etc.
+          KEY=$(echo "$BRANCH" | grep -oiE '[A-Z]+-[0-9]+' | head -1 | tr '[:lower:]' '[:upper:]')
+          if [ -z "$KEY" ]; then
+            echo "No JIRA ticket key found in branch '$BRANCH' — skipping."
+            echo "found=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found ticket key: $KEY"
+            echo "key=$KEY" >> $GITHUB_OUTPUT
+            echo "found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Transition JIRA ticket to Done
+        if: steps.ticket.outputs.found == 'true'
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TICKET_KEY: ${{ steps.ticket.outputs.key }}
+        run: |
+          # Get available transitions for the ticket
+          TRANSITIONS=$(curl -s \
+            -u "$JIRA_USERNAME:$JIRA_API_TOKEN" \
+            -H "Accept: application/json" \
+            "$JIRA_URL/rest/api/3/issue/$TICKET_KEY/transitions")
+
+          TRANSITION_ID=$(echo "$TRANSITIONS" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          transitions = data.get('transitions', [])
+          match = next((t for t in transitions if t['name'].lower() == 'done'), None)
+          print(match['id'] if match else '')
+          ")
+
+          if [ -z "$TRANSITION_ID" ]; then
+            echo "::warning::No 'Done' transition found for $TICKET_KEY"
+            echo "Available transitions:"
+            echo "$TRANSITIONS" | python3 -c "
+          import json, sys
+          for t in json.load(sys.stdin).get('transitions', []):
+              print(f\"  - {t['name']} (id: {t['id']})\")
+            "
+            exit 0
+          fi
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -u "$JIRA_USERNAME:$JIRA_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"transition\": {\"id\": \"$TRANSITION_ID\"}}" \
+            "$JIRA_URL/rest/api/3/issue/$TICKET_KEY/transitions")
+
+          if [ "$HTTP_STATUS" = "204" ]; then
+            echo "✅ $TICKET_KEY transitioned to Done"
+          else
+            echo "::error::Failed to transition $TICKET_KEY (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
