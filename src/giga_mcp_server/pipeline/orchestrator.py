@@ -387,14 +387,105 @@ class PipelineOrchestrator:
             logger.warning(
                 "ci_failed", pr=pr.number, failed=ci_status.failed, ticket=ticket_key
             )
+            # ── CI feedback loop ──────────────────────────────────────────
+            # Fetch the failure log and retry implementation on the same branch.
+            ci_logs = await self._github.get_failed_check_logs(pr.number)
+            logger.info("ci_feedback_loop", ticket=ticket_key, pr=pr.number)
             await add_pipeline_comment(
                 self._jira, ticket_key,
-                f"CI failed on PR #{pr.number}. Failed checks: "
-                f"{', '.join(ci_status.failed)}\nPR: {pr.url}"
+                f"CI failed on PR #{pr.number} — retrying implementation with failure details.\n"
+                f"Failed checks: {', '.join(ci_status.failed)}\nPR: {pr.url}"
             )
-            state.status = "failed"
-            state.error = f"CI checks failed: {ci_status.failed}"
-            return
+
+            ci_feedback = [
+                f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"
+            ]
+
+            # Re-run implementer + validator with CI failure as feedback
+            for attempt in range(1, max_retries + 1):
+                state.stage = "implementing"
+                logger.info("ci_retry_attempt", ticket=ticket_key, attempt=attempt)
+
+                impl_tasks = [
+                    self._run_implementer(
+                        f, plan, spec, existing_contents, config, max_retries,
+                        validator_feedback=ci_feedback,
+                    )
+                    for f in impl_files
+                ]
+                test_tasks = [
+                    self._run_test_writer(
+                        t, spec, existing_contents, config, max_retries,
+                        validator_feedback=ci_feedback,
+                    )
+                    for t in test_file_specs
+                ]
+                results = await asyncio.gather(*impl_tasks, *test_tasks)
+                impl_outputs = list(results[: len(impl_tasks)])
+                test_outputs = list(results[len(impl_tasks):])
+                all_impl_outputs = impl_outputs + test_outputs
+
+                state.stage = "validator"
+                impl_map = {o["path"]: o["content"] for o in impl_outputs}
+                test_map = {o["path"]: o["content"] for o in test_outputs}
+                validation = await _with_retry(
+                    lambda: self._runner.run("validator", {
+                        "spec": spec,
+                        "implementation_files": impl_map,
+                        "test_files": test_map,
+                        "coding_standards": config.coding_standards,
+                    }),
+                    max_retries,
+                    "validator",
+                )
+
+                if validation.get("passed"):
+                    logger.info("ci_retry_validation_passed", attempt=attempt)
+                    break
+
+                ci_feedback = [
+                    f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"
+                ] + validation.get("issues", [])
+
+            if not validation.get("passed"):
+                state.status = "failed"
+                state.error = f"CI checks failed and retry validation did not pass: {ci_status.failed}"
+                return
+
+            # Push fixed files as a new commit on the same branch
+            state.stage = "committing"
+            file_changes = [
+                FileChange(
+                    path=o["path"],
+                    content=o["content"],
+                    action=next(
+                        (f.get("action", "modify") for f in impl_files if f["path"] == o["path"]),
+                        "modify",
+                    ),
+                )
+                for o in all_impl_outputs
+            ]
+            await self._github.commit_changes(
+                branch=branch_name,
+                files=file_changes,
+                message=f"fix: address CI failures\n\n{minted['commit_message']}",
+            )
+            logger.info("ci_fix_committed", branch=branch_name)
+
+            # Re-poll CI on the updated commit
+            state.stage = "waiting_for_ci"
+            ci_status = await self._github.poll_pr_until_complete(pr.number)
+            state.ci_state = ci_status.state
+
+            if ci_status.state == "failure":
+                await add_pipeline_comment(
+                    self._jira, ticket_key,
+                    f"CI still failing after retry on PR #{pr.number}. "
+                    f"Manual review required.\nPR: {pr.url}"
+                )
+                state.status = "failed"
+                state.error = f"CI still failing after retry: {ci_status.failed}"
+                return
 
         state.status = "done"
         state.stage = "done"

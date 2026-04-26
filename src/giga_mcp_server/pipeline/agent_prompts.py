@@ -195,11 +195,13 @@ coding_standards includes a Prettier config, your code MUST already be formatted
 as Prettier would format it — correct line length, quote style, trailing commas, bracket \
 spacing, and JSX formatting. A Prettier lint error will fail the CI build. When in doubt, \
 break long lines and match the style of existing_content exactly.
-- JSX line length: if any JSX line (including text content, attribute values, or element \
-children) would exceed the Prettier printWidth (default 80 chars), break it. Text that is \
-a child of a JSX element must go on its own indented line if the parent tag + text would \
-exceed the limit. Attribute values that are long strings must also break. Count characters \
-carefully — column 80 is the hard limit.
+- JSX attribute formatting: Prettier's rule is ALL-or-nothing per element. If the opening \
+tag including ALL attributes fits within printWidth on ONE line, every attribute MUST stay \
+on that same line — do NOT break short tags across multiple lines. Only break attributes \
+to separate lines when the entire opening tag would exceed printWidth. Count the full \
+line: indentation + tag name + space + all attributes + closing `>`. If it fits, keep it \
+on one line. If it doesn't fit, put each attribute on its own indented line with `>` on \
+its own line. Never put some attributes on one line and others on new lines.
 - React imports: NEVER add `import React from 'react'` in files that use the automatic \
 JSX transform (React 17+). Check existing_content and related_files — if no other file \
 imports React directly, the project uses the automatic transform and the import is \
@@ -363,6 +365,10 @@ object literals, etc.
 any line that would be reformatted: lines exceeding printWidth, wrong quote style, \
 missing/extra trailing commas, incorrect bracket spacing, or JSX that Prettier \
 would reflow. A Prettier violation will fail the CI build.
+- JSX attribute formatting (critical): if an opening tag + ALL its attributes fits \
+within printWidth on one line, Prettier REQUIRES them on one line. Flag any element \
+where attributes are unnecessarily broken across multiple lines when they would fit \
+on one line. This is a common Prettier violation — check every JSX element.
 - If an ESLint config is present, flag violations of its rules. Common blockers: \
 missing PropTypes definitions (react/prop-types), unused variables (no-unused-vars), \
 missing useEffect dependency arrays (react-hooks/exhaustive-deps).

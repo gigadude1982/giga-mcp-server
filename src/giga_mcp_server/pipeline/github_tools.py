@@ -319,6 +319,52 @@ class GitHubClient:
 
         return ChecksStatus(state=state, passed=passed, failed=failed, pending=pending)
 
+    async def get_failed_check_logs(self, pr_number: int, max_chars: int = 3000) -> str:
+        """Fetch stdout logs from failed CI check runs for a PR.
+
+        Returns a condensed string of the failure output suitable for feeding
+        back to the implementer as ci_failure_feedback.
+        """
+        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            head_sha = resp.json()["head"]["sha"]
+
+            checks_url = f"{_GH_API}/repos/{self._repo}/commits/{head_sha}/check-runs"
+            resp = await client.get(checks_url)
+            resp.raise_for_status()
+            runs = resp.json().get("check_runs", [])
+
+            failure_logs: list[str] = []
+            for run in runs:
+                if run.get("conclusion") not in ("failure", "timed_out"):
+                    continue
+                logs_url = run.get("details_url", "")
+                jobs_url = f"{_GH_API}/repos/{self._repo}/actions/runs/{run['id']}/jobs"
+                try:
+                    resp = await client.get(jobs_url)
+                    resp.raise_for_status()
+                    for job in resp.json().get("jobs", []):
+                        if job.get("conclusion") != "failure":
+                            continue
+                        log_url = f"{_GH_API}/repos/{self._repo}/actions/jobs/{job['id']}/logs"
+                        log_resp = await client.get(log_url, follow_redirects=True)
+                        if log_resp.status_code == 200:
+                            # Extract only error-relevant lines
+                            lines = log_resp.text.splitlines()
+                            error_lines = [
+                                line for line in lines
+                                if any(kw in line for kw in ("error", "Error", "ERROR", "failed", "FAIL", "✗", "×"))
+                            ]
+                            failure_logs.append(f"Job: {job['name']}\n" + "\n".join(error_lines[:50]))
+                except Exception:
+                    if logs_url:
+                        failure_logs.append(f"Check: {run['name']} — see {logs_url}")
+
+        combined = "\n\n".join(failure_logs)
+        return combined[:max_chars] if combined else "CI failed — no log details available"
+
     async def poll_pr_until_complete(
         self,
         pr_number: int,
