@@ -129,10 +129,11 @@ class TicketEnricher:
         """Fetch a ticket and return AI analysis without modifying JIRA."""
         ticket = await self._jira.get_issue(issue_key)
 
-        # Fetch recent issues for duplicate detection context
+        # Fetch recent issues for duplicate detection context (exclude obsolete tickets)
         jql = (
             f'project = "{self._settings.jira_project_key}" '
             f"AND key != {issue_key} "
+            f'AND status != "Obsolete" '
             f"ORDER BY created DESC"
         )
         recent = await self._jira.search_issues(jql, max_results=30)
@@ -233,6 +234,7 @@ class TicketEnricher:
         jql = (
             f'project = "{self._settings.jira_project_key}" '
             f"AND key != {issue_key} "
+            f'AND status != "Obsolete" '
             f"ORDER BY created DESC"
         )
         recent = await self._jira.search_issues(jql, max_results=50)
