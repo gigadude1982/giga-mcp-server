@@ -37,18 +37,18 @@ get_server_info()
 
 ---
 
-### `create_story`
-Creates a new Jira ticket from a natural language description.
-
-**Important:** Always use `auto_enrich: false`. The `auto_enrich: true` option causes
-JSON parse errors and is unreliable.
+### `create_ticket`
+Creates a new Jira ticket from a natural language description. The AI determines the
+appropriate issue type (Task, Bug, Story, etc.) and enriches the ticket automatically.
 
 ```
-create_story(
-  description: "Your story description here",
-  auto_enrich: false
+create_ticket(
+  description: "Your ticket description here",
+  auto_enrich: true   // default — adds acceptance criteria, labels, priority
 )
 ```
+
+Set `auto_enrich: false` if you want a bare ticket created without AI enrichment.
 
 Returns the new ticket key (e.g. `PIT-42`) and a link to the Jira issue.
 
@@ -59,6 +59,34 @@ Fetches full details of a Jira ticket including status, priority, labels, and de
 
 ```
 get_ticket(issue_key: "PIT-42")
+```
+
+---
+
+### `edit_ticket`
+Edits one or more fields on an existing Jira ticket. All fields are optional — only the
+ones you provide will be updated.
+
+```
+edit_ticket(
+  issue_key:   "PIT-42",
+  summary:     "New ticket title",
+  description: "Updated description text",
+  priority:    "High",       // Highest, High, Medium, Low, Lowest
+  labels:      ["auth", "api"]  // replaces existing labels
+)
+```
+
+---
+
+### `add_comment`
+Adds a comment to a Jira ticket.
+
+```
+add_comment(
+  issue_key: "PIT-42",
+  body: "Comment text here (plain text or Markdown)"
+)
 ```
 
 ---
@@ -111,7 +139,8 @@ analyze_ticket(issue_key: "PIT-42")
 ---
 
 ### `find_duplicates`
-Checks a ticket against recent issues for potential duplicates.
+Checks a ticket against recent issues for potential duplicates. Obsolete tickets are
+automatically excluded from the comparison.
 
 ```
 find_duplicates(issue_key: "PIT-42")
@@ -188,7 +217,7 @@ process_backlog(limit: 10)
 
 ### Create and process a new ticket end-to-end
 
-1. `create_story(description: "...", auto_enrich: false)` → get ticket key
+1. `create_ticket(description: "...")` → get ticket key
 2. `process_ticket(issue_key: "PIT-XX")` → plan is generated and posted to Jira
 3. Review the plan comment in Jira
 4. `process_ticket(issue_key: "PIT-XX", approve_plan: true)` → implementation runs
@@ -216,10 +245,9 @@ update_ticket_status(issue_key: "PIT-XX", status: "Obsolete")
 
 | Issue | Workaround |
 |-------|------------|
-| `auto_enrich: true` on `create_story` causes JSON parse errors | Always use `auto_enrich: false` |
 | New tools not visible after server update | Disconnect and reconnect the connector in Claude.ai Settings, then start a fresh chat |
-| `enrich_ticket` may be broken on some versions | Check `get_server_info` version; tracked as PIT-29 |
 | Long-running pipeline calls may time out (older versions) | Fixed in v0.5.6+ with async pipeline; use `get_pipeline_status` to poll |
+| "No approval received" error in Claude Desktop | This is a Claude Desktop permission dialog — click Allow when it appears for write operations |
 
 ---
 
@@ -239,4 +267,4 @@ Reference them if reviewing a generated PR:
 
 ---
 
-*Last updated: April 2026 — Server v0.5.6*
+*Last updated: April 2026 — Server v0.5.45*
