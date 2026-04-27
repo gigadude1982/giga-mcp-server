@@ -32,15 +32,27 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           TICKET_KEY: ${{ steps.ticket.outputs.key }}
         run: |
-          # Get available transitions for the ticket
-          TRANSITIONS=$(curl -s \
+          # Validate required secrets — skip gracefully if not configured
+          if [ -z "$JIRA_URL" ] || [ -z "$JIRA_USERNAME" ] || [ -z "$JIRA_API_TOKEN" ]; then
+            echo "::warning::Skipping Jira transition — JIRA_URL, JIRA_USERNAME (or JIRA_USER), and JIRA_API_TOKEN must all be set in this repository's secrets."
+            exit 0
+          fi
+
+          # Get available transitions for the ticket, capturing HTTP status
+          TRANSITIONS_BODY=$(mktemp)
+          TRANSITIONS_STATUS=$(curl -s -w "%{http_code}" -o "$TRANSITIONS_BODY" \
             -u "$JIRA_USERNAME:$JIRA_API_TOKEN" \
             -H "Accept: application/json" \
             "$JIRA_URL/rest/api/3/issue/$TICKET_KEY/transitions")
 
-          TRANSITION_ID=$(echo "$TRANSITIONS" | python3 -c "
+          if [ "$TRANSITIONS_STATUS" != "200" ]; then
+            echo "::warning::Skipping Jira transition — API returned HTTP $TRANSITIONS_STATUS for $TICKET_KEY. Check that JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN are correct."
+            exit 0
+          fi
+
+          TRANSITION_ID=$(python3 -c "
           import json, sys
-          data = json.load(sys.stdin)
+          data = json.load(open('$TRANSITIONS_BODY'))
           transitions = data.get('transitions', [])
           match = next((t for t in transitions if t['name'].lower() == 'done'), None)
           print(match['id'] if match else '')
@@ -49,9 +61,9 @@ jobs:
           if [ -z "$TRANSITION_ID" ]; then
             echo "::warning::No 'Done' transition found for $TICKET_KEY"
             echo "Available transitions:"
-            echo "$TRANSITIONS" | python3 -c "
-          import json, sys
-          for t in json.load(sys.stdin).get('transitions', []):
+            python3 -c "
+          import json
+          for t in json.load(open('$TRANSITIONS_BODY')).get('transitions', []):
               print(f\"  - {t['name']} (id: {t['id']})\")
             "
             exit 0
@@ -67,6 +79,5 @@ jobs:
           if [ "$HTTP_STATUS" = "204" ]; then
             echo "✅ $TICKET_KEY transitioned to Done"
           else
-            echo "::error::Failed to transition $TICKET_KEY (HTTP $HTTP_STATUS)"
-            exit 1
+            echo "::warning::Failed to transition $TICKET_KEY (HTTP $HTTP_STATUS)"
           fi
