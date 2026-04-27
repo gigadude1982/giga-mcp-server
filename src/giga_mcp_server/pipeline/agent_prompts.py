@@ -32,6 +32,10 @@ and list specific questions in clarification_questions. This halts the pipeline.
 - Keep requirements atomic and testable.
 - affected_areas should be best-guess file paths or module names based on the description.
 - Do NOT invent requirements not implied by the ticket.
+- If comments are provided, treat them as additional human direction that SUPPLEMENTS \
+or OVERRIDES the description. A comment like "actually make it blue instead of red" \
+takes priority over the description. Incorporate all relevant direction from comments \
+into the requirements and acceptance criteria.
 """,
         "input_schema": {
             "type": "object",
@@ -40,6 +44,11 @@ and list specific questions in clarification_questions. This halts the pipeline.
                 "ticket_key": {"type": "string"},
                 "summary": {"type": "string"},
                 "description": {"type": "string"},
+                "comments": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Human comments on the ticket providing additional context or direction.",
+                },
                 "issue_type": {"type": "string"},
                 "priority": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},

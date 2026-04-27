@@ -95,7 +95,7 @@ class TicketEnricher:
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._model = settings.anthropic_model
 
-    async def create_story(self, description: str, auto_enrich: bool = True) -> IdeaResult:
+    async def create_ticket(self, description: str, auto_enrich: bool = True) -> IdeaResult:
         """Parse a natural language description into a JIRA ticket using AI."""
         response = await self._client.messages.create(
             model=self._model,
@@ -116,8 +116,8 @@ class TicketEnricher:
             labels=data.get("labels", []),
         )
 
-        result = await self._jira.create_story(idea)
-        logger.info("story_created", issue_key=result.jira_key, summary=idea.summary)
+        result = await self._jira.create_ticket(idea)
+        logger.info("ticket_created", issue_key=result.jira_key, summary=idea.summary)
 
         if auto_enrich:
             await self.enrich_ticket(result.jira_key)

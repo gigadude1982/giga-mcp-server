@@ -8,7 +8,7 @@ from giga_mcp_server.models import ParsedIdea
 
 class TestJiraClient:
     @patch("giga_mcp_server.jira.client.Jira")
-    async def test_create_story(self, MockJira: MagicMock, mock_settings: MagicMock) -> None:
+    async def test_create_ticket(self, MockJira: MagicMock, mock_settings: MagicMock) -> None:
         mock_jira_instance = MockJira.return_value
         mock_jira_instance.create_issue.return_value = {"key": "PROJ-99"}
 
@@ -20,7 +20,7 @@ class TestJiraClient:
             labels=["frontend", "analytics"],
             issue_type="Story",
         )
-        result = await client.create_story(idea)
+        result = await client.create_ticket(idea)
 
         assert result.jira_key == "PROJ-99"
         assert result.jira_url == "https://test.atlassian.net/browse/PROJ-99"
@@ -35,7 +35,7 @@ class TestJiraClient:
         assert fields["labels"] == ["frontend", "analytics"]
 
     @patch("giga_mcp_server.jira.client.Jira")
-    async def test_create_story_without_labels(
+    async def test_create_ticket_without_labels(
         self, MockJira: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_jira_instance = MockJira.return_value
@@ -43,7 +43,7 @@ class TestJiraClient:
 
         client = JiraClient(mock_settings)
         idea = ParsedIdea(summary="Simple idea", description="Details")
-        result = await client.create_story(idea)
+        result = await client.create_ticket(idea)
 
         assert result.jira_key == "PROJ-100"
         call_args = mock_jira_instance.create_issue.call_args

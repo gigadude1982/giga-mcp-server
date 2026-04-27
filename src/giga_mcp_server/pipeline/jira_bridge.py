@@ -37,19 +37,24 @@ def extract_adf_text(description: Any) -> str:
 
 
 async def get_ticket_for_pipeline(jira_client: JiraClient, ticket_key: str) -> dict[str, Any]:
-    """Fetch a JIRA ticket and return a clean dict suitable for the Digester agent input."""
+    """Fetch a JIRA ticket and return a clean dict suitable for the Digester agent input.
+
+    Includes user comments so the digester can incorporate additional context and
+    direction left by a human reviewer on the ticket.
+    """
     raw = await jira_client.get_issue(ticket_key)
 
     description = raw.get("description", "")
-    # get_issue already returns description as a string (normalised by JiraClient),
-    # but if the raw ADF object leaks through, extract it.
     if isinstance(description, dict):
         description = extract_adf_text(description)
+
+    comments = await jira_client.get_comments(ticket_key)
 
     return {
         "ticket_key": raw["key"],
         "summary": raw.get("summary", ""),
         "description": description,
+        "comments": comments,
         "issue_type": raw.get("issue_type", "Story"),
         "priority": raw.get("priority", "Medium"),
         "labels": raw.get("labels", []),

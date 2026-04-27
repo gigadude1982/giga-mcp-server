@@ -77,7 +77,7 @@ process_ticket(PIT-42, approve_plan=True)
 
 | Tool                   | Description                                                       |
 | ---------------------- | ----------------------------------------------------------------- |
-| `create_story`         | Create a JIRA ticket from a natural language description          |
+| `create_ticket`        | Create a JIRA ticket from a natural language description          |
 | `analyze_ticket`       | AI-analyze a ticket and preview suggested enrichments (read-only) |
 | `enrich_ticket`        | Analyze and apply AI enrichment to a JIRA ticket                  |
 | `process_backlog`      | Batch-enrich unprocessed tickets in the backlog                   |

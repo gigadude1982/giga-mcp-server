@@ -10,6 +10,21 @@ from giga_mcp_server.config import Settings
 from giga_mcp_server.models import IdeaResult, ParsedIdea
 from giga_mcp_server.retry import async_retry
 
+
+def _adf_to_text(node: Any) -> str:
+    """Extract plain text from an ADF node (JIRA Cloud comment/description format)."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, dict):
+        if text := node.get("text"):
+            return text
+        parts = [_adf_to_text(child) for child in node.get("content", [])]
+        sep = "\n" if node.get("type") in ("paragraph", "heading", "bulletList") else " "
+        return sep.join(p for p in parts if p)
+    return ""
+
 logger = structlog.get_logger()
 
 
@@ -27,16 +42,64 @@ class JiraClient:
         )
 
     @async_retry(max_attempts=3, base_delay=2.0)
-    async def create_story(self, idea: ParsedIdea) -> IdeaResult:
-        """Create a JIRA issue from a parsed idea. Runs sync API in a thread."""
-        return await asyncio.to_thread(self._create_story_sync, idea)
+    async def get_project_issue_types(self) -> list[str]:
+        """Return the issue type names available for the configured project."""
+        try:
+            result = await asyncio.to_thread(
+                self._jira.get,
+                f"/rest/api/3/project/{self._settings.jira_project_key}",
+            )
+            types = result.get("issueTypes", [])
+            return [t["name"] for t in types if not t.get("subtask", False)]
+        except Exception:
+            return []
 
-    def _create_story_sync(self, idea: ParsedIdea) -> IdeaResult:
+    def _resolve_issue_type(self, requested: str, valid_types: list[str]) -> str:
+        """Map a requested issue type to the nearest valid one for the project.
+
+        Falls back to the configured default, then to the first available type.
+        """
+        if not valid_types:
+            return requested or self._settings.jira_default_issue_type
+
+        # Exact match (case-insensitive)
+        for t in valid_types:
+            if t.lower() == (requested or "").lower():
+                return t
+
+        # Semantic fallbacks: map common AI-generated names to JIRA equivalents
+        fallback_map = {
+            "story": ["story", "user story", "task", "feature"],
+            "bug": ["bug", "defect", "issue", "problem"],
+            "task": ["task", "chore", "maintenance", "subtask"],
+            "epic": ["epic", "initiative"],
+            "feature": ["feature", "story", "task"],
+        }
+        requested_lower = (requested or "").lower()
+        for candidate in fallback_map.get(requested_lower, []):
+            for t in valid_types:
+                if t.lower() == candidate:
+                    return t
+
+        # Fall back to configured default, then first available
+        default = self._settings.jira_default_issue_type
+        for t in valid_types:
+            if t.lower() == default.lower():
+                return t
+        return valid_types[0]
+
+    async def create_ticket(self, idea: ParsedIdea) -> IdeaResult:
+        """Create a JIRA issue from a parsed idea. Runs sync API in a thread."""
+        valid_types = await self.get_project_issue_types()
+        resolved_type = self._resolve_issue_type(idea.issue_type, valid_types)
+        return await asyncio.to_thread(self._create_ticket_sync, idea, resolved_type)
+
+    def _create_ticket_sync(self, idea: ParsedIdea, resolved_issue_type: str) -> IdeaResult:
         fields: dict[str, Any] = {
             "project": {"key": self._settings.jira_project_key},
             "summary": idea.summary,
             "description": idea.description,
-            "issuetype": {"name": idea.issue_type or self._settings.jira_default_issue_type},
+            "issuetype": {"name": resolved_issue_type},
             "priority": {"name": idea.priority or self._settings.jira_default_priority},
         }
 
@@ -90,6 +153,33 @@ class JiraClient:
         return issues
 
     @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_comments(self, issue_key: str, max_comments: int = 10) -> list[str]:
+        """Return the most recent non-pipeline comment bodies for a ticket."""
+        try:
+            raw = await asyncio.to_thread(
+                self._jira.issue_get_comments, issue_key
+            )
+            comments = raw.get("comments", []) if isinstance(raw, dict) else []
+            # Filter out pipeline-generated comments (start with known prefixes)
+            pipeline_prefixes = (
+                "🤖", "Autonomous pipeline", "CI failed", "Digester", "Plan:",
+                "Implementation plan", "Pipeline", "plan for"
+            )
+            user_comments = [
+                _adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
+                else str(c.get("body", ""))
+                for c in comments
+                if not any(
+                    (_adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
+                     else str(c.get("body", ""))).startswith(p)
+                    for p in pipeline_prefixes
+                )
+            ]
+            return [c for c in user_comments if c.strip()][-max_comments:]
+        except Exception:
+            logger.warning("get_comments_error", issue_key=issue_key)
+            return []
+
     async def add_comment(self, issue_key: str, body: str) -> bool:
         """Add a comment to a JIRA issue."""
         try:

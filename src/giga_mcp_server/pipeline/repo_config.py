@@ -21,6 +21,8 @@ _DEFAULTS: dict[str, Any] = {
     "max_retries_per_stage": 3,
     "human_gate_after_planner": True,
     "branch_prefix": "auto/",
+    "write_tests": True,
+    "pipeline_model": None,  # None = use server default (claude-sonnet-4-6)
 }
 
 
@@ -35,6 +37,8 @@ class RepoConfig:
     max_retries_per_stage: int = 3
     human_gate_after_planner: bool = True
     branch_prefix: str = "auto/"
+    write_tests: bool = True
+    pipeline_model: str | None = None  # overrides _PIPELINE_MODEL in agent_runner
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], default_max_retries: int = 3) -> RepoConfig:
@@ -50,6 +54,8 @@ class RepoConfig:
             max_retries_per_stage=merged["max_retries_per_stage"],
             human_gate_after_planner=merged["human_gate_after_planner"],
             branch_prefix=merged["branch_prefix"],
+            write_tests=merged["write_tests"],
+            pipeline_model=merged["pipeline_model"],
         )
 
     @classmethod

@@ -73,7 +73,7 @@ def claude_response() -> dict:
 
 class TestTicketEnricher:
     @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
-    async def test_create_story(
+    async def test_create_ticket(
         self,
         MockAnthropic: MagicMock,
         mock_jira: AsyncMock,
@@ -93,7 +93,7 @@ class TestTicketEnricher:
         mock_msg.content = [MagicMock(text=json.dumps(story_response))]
         mock_client.messages.create.return_value = mock_msg
 
-        mock_jira.create_story.return_value = IdeaResult(
+        mock_jira.create_ticket.return_value = IdeaResult(
             jira_key="PROJ-50",
             jira_url="https://test.atlassian.net/browse/PROJ-50",
             summary="Add dark mode to settings page",
@@ -101,18 +101,18 @@ class TestTicketEnricher:
         )
 
         enricher = TicketEnricher(mock_jira, mock_settings)
-        result = await enricher.create_story("add dark mode to the settings page", auto_enrich=False)
+        result = await enricher.create_ticket("add dark mode to the settings page", auto_enrich=False)
 
         assert result.jira_key == "PROJ-50"
         assert result.summary == "Add dark mode to settings page"
-        mock_jira.create_story.assert_called_once()
-        idea = mock_jira.create_story.call_args[0][0]
+        mock_jira.create_ticket.assert_called_once()
+        idea = mock_jira.create_ticket.call_args[0][0]
         assert idea.priority == "Medium"
         assert idea.issue_type == "Story"
         assert "frontend" in idea.labels
 
     @patch("giga_mcp_server.enrichment.anthropic.AsyncAnthropic")
-    async def test_create_story_with_auto_enrich(
+    async def test_create_ticket_with_auto_enrich(
         self,
         MockAnthropic: MagicMock,
         mock_jira: AsyncMock,
@@ -122,7 +122,7 @@ class TestTicketEnricher:
         mock_client = AsyncMock()
         MockAnthropic.return_value = mock_client
 
-        # First call: create_story prompt, second+: analyze_ticket prompt
+        # First call: create_ticket prompt, second+: analyze_ticket prompt
         story_response = {
             "summary": "Fix login crash",
             "description": "Login crashes on submit",
@@ -136,7 +136,7 @@ class TestTicketEnricher:
         mock_msg_analysis.content = [MagicMock(text=json.dumps(claude_response))]
         mock_client.messages.create.side_effect = [mock_msg_story, mock_msg_analysis]
 
-        mock_jira.create_story.return_value = IdeaResult(
+        mock_jira.create_ticket.return_value = IdeaResult(
             jira_key="PROJ-51",
             jira_url="https://test.atlassian.net/browse/PROJ-51",
             summary="Fix login crash",
@@ -144,7 +144,7 @@ class TestTicketEnricher:
         )
 
         enricher = TicketEnricher(mock_jira, mock_settings)
-        result = await enricher.create_story("login is crashing when i hit submit", auto_enrich=True)
+        result = await enricher.create_ticket("login is crashing when i hit submit", auto_enrich=True)
 
         assert result.jira_key == "PROJ-51"
         # Should have called Claude twice: once for story creation, once for enrichment analysis
