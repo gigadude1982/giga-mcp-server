@@ -319,6 +319,11 @@ class PipelineOrchestrator:
                 attempt=attempt,
                 issues=validator_feedback,
             )
+            issues_text = "\n".join(f"- {i}" for i in validator_feedback)
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"🔄 Validation attempt {attempt}/{max_retries} failed — retrying with feedback:\n{issues_text}"
+            )
 
         if not validation.get("passed"):
             issues = validation.get("issues", [])

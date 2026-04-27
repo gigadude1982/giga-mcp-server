@@ -10,6 +10,21 @@ from giga_mcp_server.config import Settings
 from giga_mcp_server.models import IdeaResult, ParsedIdea
 from giga_mcp_server.retry import async_retry
 
+
+def _adf_to_text(node: Any) -> str:
+    """Extract plain text from an ADF node (JIRA Cloud comment/description format)."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, dict):
+        if text := node.get("text"):
+            return text
+        parts = [_adf_to_text(child) for child in node.get("content", [])]
+        sep = "\n" if node.get("type") in ("paragraph", "heading", "bulletList") else " "
+        return sep.join(p for p in parts if p)
+    return ""
+
 logger = structlog.get_logger()
 
 
@@ -138,6 +153,33 @@ class JiraClient:
         return issues
 
     @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_comments(self, issue_key: str, max_comments: int = 10) -> list[str]:
+        """Return the most recent non-pipeline comment bodies for a ticket."""
+        try:
+            raw = await asyncio.to_thread(
+                self._jira.issue_get_comments, issue_key
+            )
+            comments = raw.get("comments", []) if isinstance(raw, dict) else []
+            # Filter out pipeline-generated comments (start with known prefixes)
+            pipeline_prefixes = (
+                "🤖", "Autonomous pipeline", "CI failed", "Digester", "Plan:",
+                "Implementation plan", "Pipeline", "plan for"
+            )
+            user_comments = [
+                _adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
+                else str(c.get("body", ""))
+                for c in comments
+                if not any(
+                    (_adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
+                     else str(c.get("body", ""))).startswith(p)
+                    for p in pipeline_prefixes
+                )
+            ]
+            return [c for c in user_comments if c.strip()][-max_comments:]
+        except Exception:
+            logger.warning("get_comments_error", issue_key=issue_key)
+            return []
+
     async def add_comment(self, issue_key: str, body: str) -> bool:
         """Add a comment to a JIRA issue."""
         try:
