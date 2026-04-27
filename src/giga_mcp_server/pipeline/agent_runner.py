@@ -26,7 +26,7 @@ class AgentRunner:
 
     def __init__(self, api_key: str, model: str = _PIPELINE_MODEL) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        self._model = model
+        self.model = model
 
     async def run(self, agent_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
         """Run a named agent, returning validated output.
@@ -49,7 +49,7 @@ class AgentRunner:
         for attempt in range(1, _MAX_PARSE_RETRIES + 1):
             try:
                 response = await self._client.messages.create(
-                    model=self._model,
+                    model=self.model,
                     max_tokens=_MAX_TOKENS,
                     system=config["system_prompt"],
                     messages=messages,

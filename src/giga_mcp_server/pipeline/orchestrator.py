@@ -74,6 +74,7 @@ class PipelineOrchestrator:
         self._settings = settings
         self._jira = jira_client
         self._runner = AgentRunner(api_key=settings.anthropic_api_key)
+        self._config_model: str | None = None  # set after config is loaded
         self._github = GitHubClient(
             token=settings.github_token,
             repo=settings.github_repo,
@@ -98,6 +99,8 @@ class PipelineOrchestrator:
                 self._settings.github_base_branch,
                 default_max_retries=self._settings.pipeline_max_retries,
             )
+            if config.pipeline_model:
+                self._runner.model = config.pipeline_model
             await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
         except _HaltError as e:
             state.status = "halted"
@@ -206,6 +209,8 @@ class PipelineOrchestrator:
                 config.coding_standards = (
                     f"{config.coding_standards}\n\nFormatter configs from repo:\n{formatter_configs}"
                 )
+            if config.pipeline_model:
+                self._runner.model = config.pipeline_model
             await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"
@@ -276,7 +281,7 @@ class PipelineOrchestrator:
                     validator_feedback=validator_feedback,
                 )
                 for t in test_file_specs
-            ]
+            ] if config.write_tests else []
 
             results = await asyncio.gather(*impl_tasks, *test_tasks)
             impl_outputs = list(results[: len(impl_tasks)])
@@ -424,7 +429,7 @@ class PipelineOrchestrator:
                         validator_feedback=ci_feedback,
                     )
                     for t in test_file_specs
-                ]
+                ] if config.write_tests else []
                 results = await asyncio.gather(*impl_tasks, *test_tasks)
                 impl_outputs = list(results[: len(impl_tasks)])
                 test_outputs = list(results[len(impl_tasks):])
