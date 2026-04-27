@@ -141,15 +141,15 @@ async def get_server_info(ctx: Context = None) -> str:
 
 
 @mcp.tool()
-async def create_story(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
-    """Create a JIRA ticket from a natural language description. AI structures it into a proper story with priority, labels, and acceptance criteria.
+async def create_ticket(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
+    """Create a JIRA ticket from a natural language description. AI determines the appropriate issue type (Task, Bug, Story, etc) based on context and maps it to the project's configured types.
 
     Args:
         description: Natural language description of the feature, bug, or task.
         auto_enrich: If true, automatically enrich the ticket after creation (adds acceptance criteria, subtasks, etc).
     """
     app = _app(ctx)
-    result = await app.enricher.create_story(description, auto_enrich=auto_enrich)
+    result = await app.enricher.create_ticket(description, auto_enrich=auto_enrich)
 
     lines = [
         f"## Created {result.jira_key}",

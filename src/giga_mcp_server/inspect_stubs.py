@@ -36,7 +36,7 @@ class MockJiraClient:
         self._settings = settings
         self._counter = _ISSUE_COUNTER
 
-    async def create_story(self, idea: ParsedIdea) -> IdeaResult:
+    async def create_ticket(self, idea: ParsedIdea) -> IdeaResult:
         self._counter += 1
         key = f"DEMO-{self._counter}"
         return IdeaResult(
@@ -129,7 +129,7 @@ class MockTicketEnricher:
         self._jira = jira_client
         self._settings = settings
 
-    async def create_story(
+    async def create_ticket(
         self, description: str, auto_enrich: bool = True
     ) -> IdeaResult:
         key = f"DEMO-{random.randint(200, 299)}"
