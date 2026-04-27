@@ -191,9 +191,16 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
   "test_dirs": ["tests"],
   "max_retries_per_stage": 3,
   "human_gate_after_planner": true,
-  "branch_prefix": "auto/"
+  "branch_prefix": "auto/",
+  "write_tests": true,
+  "pipeline_model": null
 }
 ```
+
+| Field | Default | Description |
+| ----- | ------- | ----------- |
+| `write_tests` | `true` | Whether the pipeline generates a test file alongside implementation |
+| `pipeline_model` | `null` | Override the Claude model used by the pipeline (default: `claude-sonnet-4-6`) |
 
 If the file is absent, sensible defaults are used. The pipeline also auto-fetches `.prettierrc`, `.eslintrc`, and `.editorconfig` from the repo and appends them to `coding_standards` so the implementer knows the exact formatting rules.
 
