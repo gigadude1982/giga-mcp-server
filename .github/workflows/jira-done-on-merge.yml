@@ -28,7 +28,7 @@ jobs:
         if: steps.ticket.outputs.found == 'true'
         env:
           JIRA_URL: ${{ secrets.JIRA_URL }}
-          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME || secrets.JIRA_USER }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           TICKET_KEY: ${{ steps.ticket.outputs.key }}
         run: |
