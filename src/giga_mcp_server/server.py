@@ -141,12 +141,18 @@ async def get_server_info(ctx: Context = None) -> str:
 
 
 @mcp.tool()
-async def create_ticket(description: str, auto_enrich: bool = True, ctx: Context = None) -> str:
+async def create_ticket(
+    description: str,
+    auto_enrich: bool = True,
+    auto_process: bool = False,
+    ctx: Context = None,
+) -> str:
     """Create a JIRA ticket from a natural language description. AI determines the appropriate issue type (Task, Bug, Story, etc) based on context and maps it to the project's configured types.
 
     Args:
         description: Natural language description of the feature, bug, or task.
         auto_enrich: If true, automatically enrich the ticket after creation (adds acceptance criteria, subtasks, etc).
+        auto_process: If true, automatically start the implementation pipeline after creation (digest → plan → implement → PR).
     """
     app = _app(ctx)
     result = await app.enricher.create_ticket(description, auto_enrich=auto_enrich)
@@ -159,6 +165,19 @@ async def create_ticket(description: str, auto_enrich: bool = True, ctx: Context
     ]
     if auto_enrich:
         lines.append("*Auto-enriched with AI analysis.*")
+
+    if auto_process:
+        if not app.settings.github_token:
+            lines.append("Pipeline not started: GIGA_GITHUB_TOKEN is missing.")
+        elif not app.settings.github_repo:
+            lines.append("Pipeline not started: GIGA_GITHUB_REPO is missing.")
+        else:
+            state = PipelineState(ticket_key=result.jira_key)
+            app.pipeline_runs[result.jira_key] = state
+            task = asyncio.create_task(app.pipeline.run(result.jira_key, state, skip_human_gate=False))
+            app.pipeline_tasks[result.jira_key] = task
+            lines.append(f"*Pipeline started. Use `get_pipeline_status` with `{result.jira_key}` to check progress.*")
+
     return "\n".join(lines)
 
 
