@@ -33,6 +33,10 @@ export interface GigaMcpServerServiceProps {
   existingCognitoUserPoolId?: string;
   /** Wire Cognito pool/client IDs into the container env vars to enable JWT auth. */
   enableAuth?: boolean;
+  /** Enable Pinecone integrated-inference vector store for semantic duplicate detection. */
+  vectorEnabled?: boolean;
+  /** Pinecone index name (must be created with an embedded model); defaults to 'giga-tickets'. */
+  pineconeIndexName?: string;
   /** App Runner CPU units; defaults to '256' (0.25 vCPU). */
   cpu?: string;
   /** App Runner memory in MB; defaults to '512' (0.5 GB). */
@@ -83,6 +87,8 @@ export class GigaMcpServerService extends Construct {
       accessRoleArn,
       existingCognitoUserPoolId,
       enableAuth = false,
+      vectorEnabled = false,
+      pineconeIndexName = 'giga-tickets',
       cpu = '256',
       memory = '512',
     } = props;
@@ -141,11 +147,18 @@ export class GigaMcpServerService extends Construct {
                 { name: 'GIGA_COGNITO_CLIENT_ID', value: this.userPoolClient.userPoolClientId },
                 { name: 'GIGA_PUBLIC_URL', value: `https://${subdomain}` },
               ] : []),
+              ...(vectorEnabled ? [
+                { name: 'GIGA_VECTOR_ENABLED', value: 'true' },
+                { name: 'GIGA_PINECONE_INDEX_NAME', value: pineconeIndexName },
+              ] : []),
             ],
             runtimeEnvironmentSecrets: [
               { name: 'GIGA_JIRA_API_TOKEN', value: ssmParamArn('jira-api-token') },
               { name: 'GIGA_ANTHROPIC_API_KEY', value: ssmParamArn('anthropic-api-key') },
               { name: 'GIGA_GITHUB_TOKEN', value: ssmParamArn('github-token') },
+              ...(vectorEnabled ? [
+                { name: 'GIGA_PINECONE_API_KEY', value: ssmParamArn('pinecone-api-key') },
+              ] : []),
             ],
           },
         },

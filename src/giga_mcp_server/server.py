@@ -15,6 +15,7 @@ from giga_mcp_server.config import Settings
 from giga_mcp_server.enrichment import TicketEnricher
 from giga_mcp_server.jira.client import JiraClient
 from giga_mcp_server.pipeline.orchestrator import PipelineOrchestrator, PipelineState
+from giga_mcp_server.vector import VectorStore
 
 
 def _configure_logging(log_file: str | None) -> None:
@@ -51,6 +52,7 @@ class AppContext:
     settings: Settings
     pipeline: PipelineOrchestrator
     pipeline_runs: dict[str, PipelineState]
+    vector_store: VectorStore | None = None
     pipeline_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
@@ -81,16 +83,26 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     settings.validate_required()
 
     jira_client = JiraClient(settings)
-    enricher = TicketEnricher(jira_client, settings)
+
+    vector_store = None
+    if settings.vector_enabled:
+        vector_store = VectorStore(
+            api_key=settings.pinecone_api_key,
+            index_name=settings.pinecone_index_name,
+        )
+        await vector_store.setup()
+
+    enricher = TicketEnricher(jira_client, settings, vector_store=vector_store)
     pipeline = PipelineOrchestrator(settings, jira_client)
 
-    logger.info("server_started", version=_VERSION, transport=settings.transport)
+    logger.info("server_started", version=_VERSION, transport=settings.transport, vector=settings.vector_enabled)
     yield AppContext(
         jira_client=jira_client,
         enricher=enricher,
         settings=settings,
         pipeline=pipeline,
         pipeline_runs={},
+        vector_store=vector_store,
     )
     logger.info("server_stopped")
 
@@ -406,6 +418,49 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
     for key, ratio in matches:
         lines.append(f"- **{key}**: {ratio:.0%} similarity")
     return "\n".join(lines)
+
+
+@mcp.tool()
+async def backfill_vectors(ctx: Context = None) -> str:
+    """Seed the vector store with all processed backlog tickets.
+
+    Run this once after enabling GIGA_VECTOR_ENABLED to populate historical data.
+    Safe to re-run — upserts are idempotent.
+    """
+    app = _app(ctx)
+    if not app.vector_store:
+        return "Vector store is not enabled. Set GIGA_VECTOR_ENABLED=true and restart."
+
+    label = app.settings.jira_processed_label
+    jql = (
+        f'project = "{app.settings.jira_project_key}" '
+        f'AND labels = "{label}" '
+        f"ORDER BY created ASC"
+    )
+    tickets = await app.jira_client.search_issues_full(jql, max_results=500)
+    if not tickets:
+        return "No processed tickets found to backfill."
+
+    async def _upsert(t: dict) -> None:
+        desc = t.get("description", "") or ""
+        await app.vector_store.upsert(
+            key=t["key"],
+            text=f"{t['summary']}\n\n{desc}",
+            metadata={
+                "key": t["key"],
+                "summary": t["summary"],
+                "description": desc[:500],
+                "issue_type": t.get("issue_type", ""),
+                "priority": t.get("priority", ""),
+                "labels": t.get("labels", []),
+            },
+        )
+
+    batch_size = 20
+    for i in range(0, len(tickets), batch_size):
+        await asyncio.gather(*(_upsert(t) for t in tickets[i : i + batch_size]))
+
+    return f"Backfill complete — {len(tickets)} ticket(s) upserted into '{app.settings.pinecone_index_name}'."
 
 
 _PIPELINE_TERMINAL_STATUSES = {"In Review", "Done", "Closed", "Resolved"}

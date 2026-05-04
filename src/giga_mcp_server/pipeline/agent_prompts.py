@@ -36,6 +36,11 @@ and list specific questions in clarification_questions. This halts the pipeline.
 or OVERRIDES the description. A comment like "actually make it blue instead of red" \
 takes priority over the description. Incorporate all relevant direction from comments \
 into the requirements and acceptance criteria.
+- If backlog_examples are provided, study them to calibrate your output to this \
+project's conventions: the expected granularity of requirements, the Given/When/Then \
+depth in acceptance_criteria, terminology used, common affected_areas patterns, and \
+label-to-type mappings. Use them as empirical references — do not copy verbatim, \
+but match the project's established style and specificity.
 """,
         "input_schema": {
             "type": "object",
@@ -52,6 +57,21 @@ into the requirements and acceptance criteria.
                 "issue_type": {"type": "string"},
                 "priority": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},
+                "backlog_examples": {
+                    "type": "array",
+                    "description": "Recently processed tickets from this project's backlog. Study these to calibrate requirements granularity, acceptance criteria depth, terminology, and affected_areas conventions.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "issue_type": {"type": "string"},
+                            "priority": {"type": "string"},
+                            "description": {"type": "string"},
+                            "labels": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
             },
         },
         "output_schema": {

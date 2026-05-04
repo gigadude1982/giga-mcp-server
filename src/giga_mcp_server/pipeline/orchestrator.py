@@ -126,7 +126,12 @@ class PipelineOrchestrator:
 
         # ── Stage 1: Digest ──────────────────────────────────────────────
         state.stage = "digester"
-        ticket_data = await get_ticket_for_pipeline(self._jira, ticket_key)
+        ticket_data, backlog_examples = await asyncio.gather(
+            get_ticket_for_pipeline(self._jira, ticket_key),
+            self._fetch_backlog_examples(exclude_key=ticket_key),
+        )
+        if backlog_examples:
+            ticket_data["backlog_examples"] = backlog_examples
         spec = await _with_retry(
             lambda: self._runner.run("digester", ticket_data), max_retries, "digester"
         )
@@ -275,17 +280,21 @@ class PipelineOrchestrator:
                 )
                 for f in impl_files
             ]
+            impl_outputs = list(await asyncio.gather(*impl_tasks))
+
+            # Overlay implementer outputs so test_writer sees actual new code
+            impl_content_map = {
+                **existing_contents,
+                **{o["path"]: o["content"] for o in impl_outputs},
+            }
             test_tasks = [
                 self._run_test_writer(
-                    t, spec, existing_contents, config, max_retries,
+                    t, spec, impl_content_map, config, max_retries,
                     validator_feedback=validator_feedback,
                 )
                 for t in test_file_specs
             ] if config.write_tests else []
-
-            results = await asyncio.gather(*impl_tasks, *test_tasks)
-            impl_outputs = list(results[: len(impl_tasks)])
-            test_outputs = list(results[len(impl_tasks):])
+            test_outputs = list(await asyncio.gather(*test_tasks)) if test_tasks else []
 
             logger.info(
                 "stage_complete",
@@ -423,16 +432,20 @@ class PipelineOrchestrator:
                     )
                     for f in impl_files
                 ]
+                impl_outputs = list(await asyncio.gather(*impl_tasks))
+
+                impl_content_map = {
+                    **existing_contents,
+                    **{o["path"]: o["content"] for o in impl_outputs},
+                }
                 test_tasks = [
                     self._run_test_writer(
-                        t, spec, existing_contents, config, max_retries,
+                        t, spec, impl_content_map, config, max_retries,
                         validator_feedback=ci_feedback,
                     )
                     for t in test_file_specs
                 ] if config.write_tests else []
-                results = await asyncio.gather(*impl_tasks, *test_tasks)
-                impl_outputs = list(results[: len(impl_tasks)])
-                test_outputs = list(results[len(impl_tasks):])
+                test_outputs = list(await asyncio.gather(*test_tasks)) if test_tasks else []
                 all_impl_outputs = impl_outputs + test_outputs
 
                 state.stage = "validator"
@@ -581,6 +594,22 @@ class PipelineOrchestrator:
         return await _with_retry(
             lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
         )
+
+    async def _fetch_backlog_examples(
+        self, exclude_key: str, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        label = self._settings.jira_processed_label
+        jql = (
+            f'project = "{self._settings.jira_project_key}" '
+            f'AND labels = "{label}" '
+            f'AND key != "{exclude_key}" '
+            f"ORDER BY created DESC"
+        )
+        try:
+            return await self._jira.search_ticket_examples(jql, limit=limit)
+        except Exception:
+            logger.warning("backlog_examples_fetch_failed", exclude_key=exclude_key)
+            return []
 
     async def _fetch_formatter_configs(self, branch: str) -> str:
         """Fetch Prettier/ESLint/EditorConfig files from the repo root and return

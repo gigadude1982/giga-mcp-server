@@ -57,6 +57,8 @@ setup_board() {
     "$(read_env_var "$env_file" GIGA_ANTHROPIC_API_KEY)"
   put_param "/giga-mcp-server/$board_id/github-token" \
     "$(read_env_var "$env_file" GIGA_GITHUB_TOKEN)"
+  put_param "/giga-mcp-server/$board_id/pinecone-api-key" \
+    "$(read_env_var "$env_file" GIGA_PINECONE_API_KEY)"
 }
 
 # ---------------------------------------------------------------------------
