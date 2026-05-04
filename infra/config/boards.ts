@@ -45,5 +45,6 @@ export const BOARDS: BoardConfig[] = [
     githubRepo: "gigadude1982/pitchvault-react",
     githubBaseBranch: "main",
     subdomain: "mcp.pitchvault.co",
+    pineconeIndexName: "pitchvault-tickets",
   },
 ];
