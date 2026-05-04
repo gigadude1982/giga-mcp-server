@@ -17,6 +17,10 @@ export interface BoardConfig {
    * auto-authenticate.
    */
   enableAuth?: boolean;
+  /** Enable Pinecone vector store for semantic duplicate detection and ticket calibration. */
+  vectorEnabled?: boolean;
+  /** Pinecone index name; defaults to 'giga-tickets'. */
+  pineconeIndexName?: string;
 }
 
 export const BOARDS: BoardConfig[] = [
@@ -29,6 +33,8 @@ export const BOARDS: BoardConfig[] = [
     githubRepo: "gigadude1982/gigacorp-react",
     githubBaseBranch: "main",
     subdomain: "mcp.gigacorp.co",
+    vectorEnabled: true,
+    pineconeIndexName: "gigacorp-tickets",
   },
   {
     boardId: "pitchvault-react",

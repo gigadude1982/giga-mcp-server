@@ -17,6 +17,7 @@ dependencies = [
     "jsonschema>=4.0",
     "structlog>=24.0",
     "PyJWT[crypto]>=2.8",
+    "pinecone>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]

@@ -37,6 +37,8 @@ export class GigaMcpServerStack extends cdk.Stack {
           githubRepo: board.githubRepo,
           githubBaseBranch: board.githubBaseBranch,
           subdomain: board.subdomain,
+          vectorEnabled: board.vectorEnabled,
+          pineconeIndexName: board.pineconeIndexName,
           ecrRepo,
           accessRoleArn: ACCESS_ROLE_ARN,
           instanceRoleArn: INSTANCE_ROLE_ARN,

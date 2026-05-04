@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from difflib import SequenceMatcher
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 import structlog
@@ -17,6 +17,9 @@ from giga_mcp_server.models import (
     SubtaskSuggestion,
     TicketAnalysis,
 )
+
+if TYPE_CHECKING:
+    from giga_mcp_server.vector.store import VectorStore
 
 logger = structlog.get_logger()
 
@@ -79,6 +82,10 @@ Guidelines:
 - Detect urgency from words like "urgent", "critical", "asap" → High/Highest
 - Default priority is "Medium"
 - Infer labels from context (e.g., "login" → "auth", "API" → "api", "UI" → "frontend")
+- If EXISTING BACKLOG EXAMPLES are provided before the NEW TICKET REQUEST, study them \
+to calibrate: summary style and length, description depth, label naming conventions, \
+and issue type choices for this project. Match the project's established patterns \
+without copying examples verbatim.
 """
 
 
@@ -89,19 +96,38 @@ class TicketEnricher:
         self,
         jira_client: JiraClient,
         settings: Settings,
+        vector_store: VectorStore | None = None,
     ) -> None:
         self._jira = jira_client
         self._settings = settings
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._model = settings.anthropic_model
+        self._vector_store = vector_store
 
     async def create_ticket(self, description: str, auto_enrich: bool = True) -> IdeaResult:
         """Parse a natural language description into a JIRA ticket using AI."""
+        examples = await self._fetch_ticket_examples()
+        if examples:
+            examples_text = "\n\n".join(
+                f"[{e['key']} / {e['issue_type']} / {e['priority']}]\n"
+                f"Summary: {e['summary']}\n"
+                f"Description: {e['description']}"
+                for e in examples
+            )
+            user_content = (
+                f"EXISTING BACKLOG EXAMPLES (study these to match project conventions):\n\n"
+                f"{examples_text}\n\n"
+                f"---\n\n"
+                f"NEW TICKET REQUEST:\n{description}"
+            )
+        else:
+            user_content = description
+
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=4096,
             system=_STORY_CREATION_PROMPT,
-            messages=[{"role": "user", "content": description}],
+            messages=[{"role": "user", "content": user_content}],
         )
         raw_text = response.content[0].text.strip()
         raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -119,11 +145,38 @@ class TicketEnricher:
         result = await self._jira.create_ticket(idea)
         logger.info("ticket_created", issue_key=result.jira_key, summary=idea.summary)
 
+        if self._vector_store:
+            await self._vector_store.upsert(
+                key=result.jira_key,
+                text=f"{idea.summary}\n\n{idea.description}",
+                metadata={
+                    "key": result.jira_key,
+                    "summary": idea.summary,
+                    "description": idea.description[:500],
+                    "issue_type": idea.issue_type,
+                    "priority": idea.priority,
+                    "labels": idea.labels,
+                },
+            )
+
         if auto_enrich:
             await self.enrich_ticket(result.jira_key)
             logger.info("story_auto_enriched", issue_key=result.jira_key)
 
         return result
+
+    async def _fetch_ticket_examples(self, limit: int = 5) -> list[dict[str, Any]]:
+        label = self._settings.jira_processed_label
+        jql = (
+            f'project = "{self._settings.jira_project_key}" '
+            f'AND labels = "{label}" '
+            f"ORDER BY created DESC"
+        )
+        try:
+            return await self._jira.search_ticket_examples(jql, limit=limit)
+        except Exception:
+            logger.warning("ticket_examples_fetch_failed")
+            return []
 
     async def analyze_ticket(self, issue_key: str) -> TicketAnalysis:
         """Fetch a ticket and return AI analysis without modifying JIRA."""
@@ -216,6 +269,21 @@ class TicketEnricher:
         await self._jira.add_comment(issue_key, "\n".join(comment_lines))
         result.comment_added = True
 
+        if self._vector_store:
+            desc = analysis.enriched_description or ticket.get("description", "") or ""
+            await self._vector_store.upsert(
+                key=issue_key,
+                text=f"{ticket['summary']}\n\n{desc}",
+                metadata={
+                    "key": issue_key,
+                    "summary": ticket["summary"],
+                    "description": desc[:500],
+                    "issue_type": analysis.suggested_type,
+                    "priority": analysis.suggested_priority,
+                    "labels": sorted(new_labels),
+                },
+            )
+
         logger.info(
             "ticket_enriched",
             issue_key=issue_key,
@@ -227,9 +295,21 @@ class TicketEnricher:
     async def find_duplicates(
         self, issue_key: str
     ) -> list[tuple[str, float]]:
-        """Check a ticket against recent issues for duplicates."""
+        """Check a ticket against existing issues for duplicates.
+
+        Uses semantic vector search when the vector store is enabled; falls back
+        to string similarity against the 50 most recent tickets otherwise.
+        """
         ticket = await self._jira.get_issue(issue_key)
-        summary = ticket["summary"].lower()
+        summary = ticket["summary"]
+
+        if self._vector_store:
+            results = await self._vector_store.search(summary, limit=10)
+            return [
+                (r["key"], round(r["_score"], 3))
+                for r in results
+                if r.get("key") != issue_key and r["_score"] >= _DEDUP_THRESHOLD
+            ]
 
         jql = (
             f'project = "{self._settings.jira_project_key}" '
@@ -238,15 +318,12 @@ class TicketEnricher:
             f"ORDER BY created DESC"
         )
         recent = await self._jira.search_issues(jql, max_results=50)
-
-        matches = []
-        for issue in recent:
-            ratio = SequenceMatcher(
-                None, summary, issue["summary"].lower()
-            ).ratio()
-            if ratio >= _DEDUP_THRESHOLD:
-                matches.append((issue["key"], ratio))
-
+        matches = [
+            (issue["key"], ratio)
+            for issue in recent
+            if (ratio := SequenceMatcher(None, summary.lower(), issue["summary"].lower()).ratio())
+            >= _DEDUP_THRESHOLD
+        ]
         matches.sort(key=lambda x: x[1], reverse=True)
         return matches
 

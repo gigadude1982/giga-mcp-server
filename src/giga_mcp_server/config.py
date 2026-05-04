@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     pipeline_commit_author_name: str = "giga-pipeline[bot]"
     pipeline_commit_author_email: str = "giga-pipeline[bot]@users.noreply.github.com"
 
+    # Vector store (Pinecone integrated inference)
+    vector_enabled: bool = False
+    pinecone_api_key: str = ""
+    pinecone_index_name: str = "giga-tickets"
+
     # Pipeline behaviour
     pipeline_human_gate: bool = True   # pause after Planner for human approval
     pipeline_max_retries: int = 3

@@ -152,6 +152,23 @@ class JiraClient:
             )
         return issues
 
+    async def search_ticket_examples(
+        self, jql: str, limit: int = 5, desc_limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Search for tickets and return the compact shape used for AI calibration."""
+        tickets = await self.search_issues_full(jql, max_results=limit)
+        return [
+            {
+                "key": t["key"],
+                "summary": t["summary"],
+                "issue_type": t.get("issue_type", ""),
+                "priority": t.get("priority", ""),
+                "description": (t.get("description", "") or "")[:desc_limit],
+                "labels": t.get("labels", []),
+            }
+            for t in tickets
+        ]
+
     @async_retry(max_attempts=3, base_delay=1.0)
     async def get_comments(self, issue_key: str, max_comments: int = 10) -> list[str]:
         """Return the most recent non-pipeline comment bodies for a ticket."""
@@ -165,16 +182,12 @@ class JiraClient:
                 "🤖", "Autonomous pipeline", "CI failed", "Digester", "Plan:",
                 "Implementation plan", "Pipeline", "plan for"
             )
-            user_comments = [
-                _adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
-                else str(c.get("body", ""))
-                for c in comments
-                if not any(
-                    (_adf_to_text(c.get("body", "")) if isinstance(c.get("body"), dict)
-                     else str(c.get("body", ""))).startswith(p)
-                    for p in pipeline_prefixes
-                )
-            ]
+            user_comments = []
+            for c in comments:
+                body = c.get("body", "")
+                body_text = _adf_to_text(body) if isinstance(body, dict) else str(body)
+                if not any(body_text.startswith(p) for p in pipeline_prefixes):
+                    user_comments.append(body_text)
             return [c for c in user_comments if c.strip()][-max_comments:]
         except Exception:
             logger.warning("get_comments_error", issue_key=issue_key)
@@ -338,11 +351,12 @@ class JiraClient:
         issues = []
         for issue in results.get("issues", []):
             f = issue["fields"]
+            raw_desc = f.get("description") or ""
             issues.append(
                 {
                     "key": issue["key"],
                     "summary": f.get("summary", ""),
-                    "description": f.get("description") or "",
+                    "description": _adf_to_text(raw_desc) if isinstance(raw_desc, dict) else raw_desc,
                     "status": f.get("status", {}).get("name", ""),
                     "priority": f.get("priority", {}).get("name", ""),
                     "issue_type": f.get("issuetype", {}).get("name", ""),
