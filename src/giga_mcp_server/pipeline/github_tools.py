@@ -365,6 +365,114 @@ class GitHubClient:
         combined = "\n\n".join(failure_logs)
         return combined[:max_chars] if combined else "CI failed — no log details available"
 
+    # ------------------------------------------------------------------
+    # PR introspection (used by code-history ingester)
+    # ------------------------------------------------------------------
+
+    async def list_merged_prs(
+        self,
+        since_days: int = 90,
+        base_branch: str = "main",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """List merged PRs against base_branch within the last N days.
+
+        Returns dicts with: number, title, body, merged_at, merge_commit_sha,
+        url, files (list of paths). Files are fetched concurrently per PR.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=since_days)
+        results: list[dict[str, Any]] = []
+        page = 1
+
+        async with httpx.AsyncClient(headers=self._headers, timeout=30.0) as client:
+            while len(results) < limit:
+                resp = await client.get(
+                    f"{_GH_API}/repos/{self._repo}/pulls",
+                    params={
+                        "state": "closed",
+                        "base": base_branch,
+                        "sort": "updated",
+                        "direction": "desc",
+                        "per_page": "100",
+                        "page": str(page),
+                    },
+                )
+                resp.raise_for_status()
+                page_data = resp.json()
+                if not page_data:
+                    break
+
+                stop = False
+                for pr in page_data:
+                    merged_at = pr.get("merged_at")
+                    if not merged_at:
+                        continue
+                    merged_dt = datetime.fromisoformat(
+                        merged_at.replace("Z", "+00:00")
+                    )
+                    if merged_dt < cutoff:
+                        stop = True
+                        break
+                    results.append(
+                        {
+                            "number": pr["number"],
+                            "title": pr["title"],
+                            "body": pr.get("body") or "",
+                            "merged_at": merged_at,
+                            "merge_commit_sha": pr.get("merge_commit_sha", ""),
+                            "url": pr["html_url"],
+                        }
+                    )
+                    if len(results) >= limit:
+                        break
+                if stop or len(page_data) < 100:
+                    break
+                page += 1
+
+        async def _attach_files(pr: dict[str, Any]) -> dict[str, Any]:
+            try:
+                async with httpx.AsyncClient(headers=self._headers, timeout=30.0) as c:
+                    resp = await c.get(
+                        f"{_GH_API}/repos/{self._repo}/pulls/{pr['number']}/files",
+                        params={"per_page": "100"},
+                    )
+                    resp.raise_for_status()
+                    pr["files"] = [f["filename"] for f in resp.json()]
+            except Exception:
+                pr["files"] = []
+            return pr
+
+        return list(await asyncio.gather(*(_attach_files(pr) for pr in results)))
+
+    async def get_pr(self, pr_number: int) -> dict[str, Any]:
+        """Fetch a single PR plus its file list. Used by index_pr ingest."""
+        async with httpx.AsyncClient(headers=self._headers, timeout=30.0) as client:
+            pr_resp = await client.get(
+                f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
+            )
+            pr_resp.raise_for_status()
+            pr = pr_resp.json()
+
+            files_resp = await client.get(
+                f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}/files",
+                params={"per_page": "100"},
+            )
+            files_resp.raise_for_status()
+            files = [f["filename"] for f in files_resp.json()]
+
+        return {
+            "number": pr["number"],
+            "title": pr["title"],
+            "body": pr.get("body") or "",
+            "merged_at": pr.get("merged_at") or "",
+            "merge_commit_sha": pr.get("merge_commit_sha", ""),
+            "url": pr.get("html_url", ""),
+            "files": files,
+            "merged": pr.get("merged_at") is not None,
+        }
+
     async def poll_pr_until_complete(
         self,
         pr_number: int,
