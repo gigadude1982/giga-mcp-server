@@ -219,6 +219,12 @@ to the corresponding JSX elements in the implementation (e.g. data-testid="foote
 before anything else. Each item is a blocking problem from a previous attempt that \
 caused the build, tests, or linter to fail. Address every single one explicitly — \
 do not skip any, and do not introduce new issues while fixing them.
+- If historical_examples are provided, study them to learn this codebase's \
+established patterns: how similar features were structured in past merged PRs, \
+naming conventions used, utilities and abstractions that already exist, and any \
+approaches that were later refined. Treat them as empirical references — match \
+the patterns they show, do not copy verbatim. If an example mentions a utility or \
+component that solves a similar problem, prefer importing it over reimplementing.
 - CRITICAL: Your output will be committed directly without running a formatter. If \
 coding_standards includes a Prettier config, your code MUST already be formatted exactly \
 as Prettier would format it — correct line length, quote style, trailing commas, bracket \
@@ -256,6 +262,20 @@ unnecessary. Adding it will trigger the no-unused-vars ESLint rule and fail the 
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Blocking issues from a previous validation attempt to fix.",
+                },
+                "historical_examples": {
+                    "type": "array",
+                    "description": "Summaries of recently merged PRs with similar scope or that touched this same file. Study to match established patterns and reuse existing utilities; do not copy verbatim.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "title": {"type": "string"},
+                            "pr_number": {"type": "integer"},
+                            "files": {"type": "array", "items": {"type": "string"}},
+                            "ticket_key": {"type": "string"},
+                        },
+                    },
                 },
             },
         },
@@ -416,6 +436,21 @@ async functions called without await.
 - Style preferences not enforced by the project's linter.
 - Minor naming inconsistencies that don't break the build.
 - Test coverage gaps beyond the acceptance criteria.
+
+## Historical signals (use past_review_signals if provided)
+- past_review_signals contains summaries of recently merged PRs that touched \
+similar areas or solved similar problems. Use them as a calibration aid — they \
+show what patterns the codebase has actually accepted in production.
+- If the new code aligns with a pattern that was previously merged, that's a \
+positive signal — do NOT block on it just because the pattern is unfamiliar to \
+you in isolation.
+- If the new code diverges meaningfully from an established working pattern \
+shown in the signals (e.g. ignores a utility that prior PRs imported, \
+reimplements behavior that already exists, contradicts a recent refactor), \
+flag it as a warning at minimum, or as a blocking issue if the divergence \
+would cause correctness or build failures.
+- Past signals NEVER override the blocking checks above. Build/lint/test \
+correctness is absolute regardless of historical patterns.
 """,
         "input_schema": {
             "type": "object",
@@ -431,6 +466,20 @@ async functions called without await.
                     "additionalProperties": {"type": "string"},
                 },
                 "coding_standards": {"type": "string"},
+                "past_review_signals": {
+                    "type": "array",
+                    "description": "Summaries of recently merged PRs with similar scope. Use as calibration — does NOT override blocking checks.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "title": {"type": "string"},
+                            "pr_number": {"type": "integer"},
+                            "files": {"type": "array", "items": {"type": "string"}},
+                            "ticket_key": {"type": "string"},
+                        },
+                    },
+                },
             },
         },
         "output_schema": {

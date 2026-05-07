@@ -128,7 +128,7 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         )
 
     enricher = TicketEnricher(jira_client, settings, vector_store=vector_store)
-    pipeline = PipelineOrchestrator(settings, jira_client)
+    pipeline = PipelineOrchestrator(settings, jira_client, code_history=code_history)
 
     logger.info(
         "server_started",
