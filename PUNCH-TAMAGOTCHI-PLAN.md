@@ -54,21 +54,7 @@ User-only steps marked **[user]**. Code changes marked **[code]** can be done by
    }
    ```
    (Tests live alongside source for React projects per the existing prompt convention.)
-5. **[code]** Add a board entry to `infra/config/boards.ts`:
-   ```ts
-   {
-     boardId: "punch-tamagotchi",
-     serverName: "punch-mcp-server",
-     jiraProjectKey: "PUNCH",
-     jiraUrl: "https://gigacorporation.atlassian.net", // or wherever PUNCH lives
-     jiraUsername: "admin@gigacorp.co",
-     githubRepo: "gigadude1982/punch-tamagotchi",
-     githubBaseBranch: "main",
-     subdomain: "punch.gigacorp.co",
-     pineconeIndexName: "punch-tickets",
-   }
-   ```
-   Decide whether `vectorEnabled: true` from the start (probably yes, since it's cheap and improves duplicate detection as the backlog grows).
+5. **[code]** ~~Add a board entry to `infra/config/boards.ts`.~~ **Done** — entry added with `vectorEnabled: true` and `jiraUrl` pointing at the gigacorporation Atlassian instance. If PUNCH ends up living in its own Atlassian instance, swap `jiraUrl` + `jiraUsername` before `cdk deploy`.
 6. **[user]** Create `.env.punch-tamagotchi` locally with the board's secrets, then run `scripts/setup-ssm.sh` to push them to SSM as SecureString parameters.
 7. **[user]** `cd infra && npx cdk deploy` to provision the new App Runner service.
 8. **[user]** Point `punch.gigacorp.co` DNS at the new App Runner service URL (CNAME record).
