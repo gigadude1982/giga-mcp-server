@@ -26,3 +26,7 @@ infra/cdk.context.json
 
 # Claude
 .claude
+
+# Ralph loop
+.ralph-stop
+ralph.log
