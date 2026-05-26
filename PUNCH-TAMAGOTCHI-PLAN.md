@@ -54,28 +54,14 @@ User-only steps marked **[user]**. Code changes marked **[code]** can be done by
    }
    ```
    (Tests live alongside source for React projects per the existing prompt convention.)
-5. **[code]** Add a board entry to `infra/config/boards.ts`:
-   ```ts
-   {
-     boardId: "punch-tamagotchi",
-     serverName: "punch-mcp-server",
-     jiraProjectKey: "PUNCH",
-     jiraUrl: "https://gigacorporation.atlassian.net", // or wherever PUNCH lives
-     jiraUsername: "admin@gigacorp.co",
-     githubRepo: "gigadude1982/punch-tamagotchi",
-     githubBaseBranch: "main",
-     subdomain: "punch.gigacorp.co",
-     pineconeIndexName: "punch-tickets",
-   }
-   ```
-   Decide whether `vectorEnabled: true` from the start (probably yes, since it's cheap and improves duplicate detection as the backlog grows).
+5. **[code]** ~~Add a board entry to `infra/config/boards.ts`.~~ **Done** — entry added with `vectorEnabled: true` and `jiraUrl` pointing at the gigacorporation Atlassian instance. If PUNCH ends up living in its own Atlassian instance, swap `jiraUrl` + `jiraUsername` before `cdk deploy`.
 6. **[user]** Create `.env.punch-tamagotchi` locally with the board's secrets, then run `scripts/setup-ssm.sh` to push them to SSM as SecureString parameters.
 7. **[user]** `cd infra && npx cdk deploy` to provision the new App Runner service.
 8. **[user]** Point `punch.gigacorp.co` DNS at the new App Runner service URL (CNAME record).
 9. **[code]** File `PUNCH-1` ticket — suggested first ticket: "Scaffold game shell with Punch idle sprite, hunger meter, and feed button." Then `process_ticket("PUNCH-1")` and watch the pipeline plan it.
 
-## Open questions to resolve during scaffolding
+## Resolved decisions (2026-05-19)
 
-- Sprite art: do you have art for Punch yet, or is this a placeholder (e.g. emoji 🐵) until you commission/draw the real sprite sheet?
-- Game loop tick rate: real-time decay (hunger drops 1 point per actual hour while the page is closed) or session-based (decays on page load based on time-since-last-visit)? Session-based is dramatically simpler and matches how original tamagotchis felt anyway.
-- Stat model for v1: hunger only? Or hunger + happiness + energy from day one? Smaller is better for v1.
+- **Sprite art:** 🐒 (U+1F412) as baby Punch placeholder; 🦧 (U+1F9A7) as the evolved form. Evolution triggers when all three stats stay above a threshold for a streak (exact rule TBD during PUNCH-1 implementation). Replacing the emoji with a real sprite sheet later is a render-layer swap — no game-logic changes.
+- **Decay model:** session-based. On page load, compute time-since-last-visit from `localStorage` and decay stats by that delta. No `setInterval` heartbeat. Matches the original tamagotchi feel and avoids background-tab edge cases.
+- **Stat model:** hunger + happiness + energy. Three stats, three actions (feed, play, sleep). Slightly more game logic than hunger-only but lines up with the classic triad and gives the evolution mechanic something to gate on.

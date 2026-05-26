@@ -47,4 +47,16 @@ export const BOARDS: BoardConfig[] = [
     subdomain: "mcp.pitchvault.co",
     pineconeIndexName: "pitchvault-tickets",
   },
+  {
+    boardId: "punch-tamagotchi",
+    serverName: "punch-mcp-server",
+    jiraProjectKey: "PUNCH",
+    jiraUrl: "https://gigacorporation.atlassian.net",
+    jiraUsername: "admin@gigacorp.co",
+    githubRepo: "gigadude1982/punch-tamagotchi",
+    githubBaseBranch: "main",
+    subdomain: "punch.gigacorp.co",
+    vectorEnabled: true,
+    pineconeIndexName: "punch-tickets",
+  },
 ];
