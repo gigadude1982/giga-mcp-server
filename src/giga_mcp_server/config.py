@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     pinecone_api_key: str = ""
     pinecone_index_name: str = "giga-tickets"
 
+    # Code-history vector store (long-term agent memory of merged PRs)
+    codehistory_enabled: bool = False
+    pinecone_codehistory_index_name: str = "giga-codehistory"
+    codehistory_summarizer_model: str = "claude-haiku-4-5-20251001"
+
     # Pipeline behaviour
     pipeline_human_gate: bool = True   # pause after Planner for human approval
     pipeline_max_retries: int = 3

@@ -30,3 +30,7 @@ infra/cdk.context.json
 # Ralph loop
 .ralph-stop
 ralph.log
+
+# JIRA-Ralph loop artifacts
+.jira-ralph-*.stop
+jira-ralph-*.log
