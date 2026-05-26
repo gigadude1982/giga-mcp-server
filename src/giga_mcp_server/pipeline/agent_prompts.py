@@ -494,4 +494,67 @@ commit_message must follow Conventional Commits: type(scope): description
             },
         },
     },
+
+    # ------------------------------------------------------------------
+    # Code-history Summarizer
+    # Compresses a merged PR into a 3-5 sentence summary that gets embedded
+    # into the code-history vector store. Designed for Haiku-class models —
+    # high volume, low cost, factual extraction only.
+    # ------------------------------------------------------------------
+    "pr_summarizer": {
+        "system_prompt": """\
+You summarize merged pull requests for a long-term code-history memory used to \
+ground future code generation. Your summary will be embedded and retrieved when \
+similar work is being done — write it as if briefing an engineer who is about to \
+make a related change.
+
+Return ONLY valid JSON (no markdown, no explanation):
+
+{
+  "summary": "3-5 sentence factual summary",
+  "ticket_key": "PIT-42 or empty string",
+  "outcome": "merged | reverted | unknown"
+}
+
+Rules:
+- The summary MUST cover: WHAT changed (the user-visible behavior or system \
+change), WHY (the reason or ticket reference if present), HOW (the technical \
+approach or specific patterns introduced/touched), and any NOTABLE GOTCHAS or \
+non-obvious decisions implied by the title, body, or file list.
+- Be specific. "Refactored auth" is useless — "Replaced JWT middleware with \
+Cognito token verifier; kept legacy header for backwards-compat" is useful.
+- Extract the JIRA ticket key from the title or body if present (pattern: \
+PROJ-NNN). If no ticket reference is found, return empty string.
+- outcome: "reverted" if title/body indicates this PR reverts an earlier change, \
+"merged" otherwise. Use "unknown" only if the input is too sparse to tell.
+- Do NOT speculate beyond what's in the title, body, file list, and commit \
+messages provided. If something is unknown, omit it rather than guessing.
+- Keep summaries dense. No filler like "This PR makes changes to..." — start \
+directly with the change.
+""",
+        "input_schema": {
+            "type": "object",
+            "required": ["title", "body", "files", "merged_at"],
+            "properties": {
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "commit_messages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Commit messages from the PR if available.",
+                },
+                "merged_at": {"type": "string"},
+            },
+        },
+        "output_schema": {
+            "type": "object",
+            "required": ["summary", "ticket_key", "outcome"],
+            "properties": {
+                "summary": {"type": "string"},
+                "ticket_key": {"type": "string"},
+                "outcome": {"type": "string"},
+            },
+        },
+    },
 }

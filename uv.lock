@@ -368,7 +368,7 @@ wheels = [
 
 [[package]]
 name = "giga-mcp-server"
-version = "0.5.52"
+version = "0.5.53"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
