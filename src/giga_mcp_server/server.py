@@ -14,8 +14,10 @@ from mcp.server.fastmcp import Context, FastMCP
 from giga_mcp_server.config import Settings
 from giga_mcp_server.enrichment import TicketEnricher
 from giga_mcp_server.jira.client import JiraClient
+from giga_mcp_server.pipeline.agent_runner import AgentRunner
+from giga_mcp_server.pipeline.github_tools import GitHubClient
 from giga_mcp_server.pipeline.orchestrator import PipelineOrchestrator, PipelineState
-from giga_mcp_server.vector import VectorStore
+from giga_mcp_server.vector import CodeHistoryIngester, CodeHistoryStore, VectorStore
 
 
 def _configure_logging(log_file: str | None) -> None:
@@ -53,6 +55,8 @@ class AppContext:
     pipeline: PipelineOrchestrator
     pipeline_runs: dict[str, PipelineState]
     vector_store: VectorStore | None = None
+    code_history: CodeHistoryStore | None = None
+    code_history_ingester: CodeHistoryIngester | None = None
     pipeline_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
@@ -92,10 +96,47 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         )
         await vector_store.setup()
 
+    code_history: CodeHistoryStore | None = None
+    code_history_ingester: CodeHistoryIngester | None = None
+    if (
+        settings.codehistory_enabled
+        and settings.github_token
+        and settings.github_repo
+    ):
+        ch_inner = VectorStore(
+            api_key=settings.pinecone_api_key,
+            index_name=settings.pinecone_codehistory_index_name,
+        )
+        code_history = CodeHistoryStore(ch_inner)
+        await code_history.setup()
+
+        summarizer = AgentRunner(
+            api_key=settings.anthropic_api_key,
+            model=settings.codehistory_summarizer_model,
+        )
+        github_client = GitHubClient(
+            token=settings.github_token,
+            repo=settings.github_repo,
+            commit_author_name=settings.pipeline_commit_author_name,
+            commit_author_email=settings.pipeline_commit_author_email,
+        )
+        code_history_ingester = CodeHistoryIngester(
+            github=github_client,
+            store=code_history,
+            summarizer_runner=summarizer,
+            base_branch=settings.github_base_branch,
+        )
+
     enricher = TicketEnricher(jira_client, settings, vector_store=vector_store)
     pipeline = PipelineOrchestrator(settings, jira_client)
 
-    logger.info("server_started", version=_VERSION, transport=settings.transport, vector=settings.vector_enabled)
+    logger.info(
+        "server_started",
+        version=_VERSION,
+        transport=settings.transport,
+        vector=settings.vector_enabled,
+        code_history=settings.codehistory_enabled,
+    )
     yield AppContext(
         jira_client=jira_client,
         enricher=enricher,
@@ -103,6 +144,8 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         pipeline=pipeline,
         pipeline_runs={},
         vector_store=vector_store,
+        code_history=code_history,
+        code_history_ingester=code_history_ingester,
     )
     logger.info("server_stopped")
 
@@ -461,6 +504,67 @@ async def backfill_vectors(ctx: Context = None) -> str:
         await asyncio.gather(*(_upsert(t) for t in tickets[i : i + batch_size]))
 
     return f"Backfill complete — {len(tickets)} ticket(s) upserted into '{app.settings.pinecone_index_name}'."
+
+
+@mcp.tool()
+async def backfill_code_history(
+    since_days: int = 90,
+    limit: int = 200,
+    ctx: Context = None,
+) -> str:
+    """Seed the code-history vector store with merged PRs from the last N days.
+
+    Each PR is summarised by Claude (Haiku) into a 3-5 sentence dense brief
+    before embedding. Builds long-term agent memory used by the Implementer
+    and Validator stages to ground generation in actual codebase evolution.
+
+    Run this once after enabling GIGA_CODEHISTORY_ENABLED. Idempotent — safe
+    to re-run; PRs are upserted by number.
+
+    Args:
+        since_days: Only index PRs merged within this window. Default 90 days.
+        limit:      Hard cap on PRs indexed in one call. Default 200.
+    """
+    app = _app(ctx)
+    if not app.code_history_ingester:
+        return (
+            "Code history is not enabled. Set GIGA_CODEHISTORY_ENABLED=true and "
+            "configure GIGA_GITHUB_REPO + GIGA_GITHUB_TOKEN, then restart."
+        )
+    result = await app.code_history_ingester.backfill(
+        since_days=since_days, limit=limit
+    )
+    return (
+        f"Code-history backfill complete — {result['indexed']}/{result['discovered']} "
+        f"PR(s) indexed (skipped: {result['skipped']}) into "
+        f"'{app.settings.pinecone_codehistory_index_name}'."
+    )
+
+
+@mcp.tool()
+async def index_pr(pr_number: int, ctx: Context = None) -> str:
+    """Index a single merged PR into the code-history vector store.
+
+    Idempotent — re-indexing a PR replaces the existing record. Useful for
+    incremental indexing from a GitHub Action on PR merge, or for manually
+    re-summarising a specific PR.
+
+    Args:
+        pr_number: The PR number to index. Must be merged.
+    """
+    app = _app(ctx)
+    if not app.code_history_ingester:
+        return (
+            "Code history is not enabled. Set GIGA_CODEHISTORY_ENABLED=true and "
+            "configure GIGA_GITHUB_REPO + GIGA_GITHUB_TOKEN, then restart."
+        )
+    ok = await app.code_history_ingester.index_pr(pr_number)
+    if ok:
+        return (
+            f"PR #{pr_number} indexed into "
+            f"'{app.settings.pinecone_codehistory_index_name}'."
+        )
+    return f"PR #{pr_number} skipped — not merged or summarisation failed (check logs)."
 
 
 _PIPELINE_TERMINAL_STATUSES = {"In Review", "Done", "Closed", "Resolved"}

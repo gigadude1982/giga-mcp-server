@@ -43,9 +43,12 @@ class VectorStore:
         query_text: str,
         limit: int = 5,
         required_label: str | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         query: dict[str, Any] = {"inputs": {_TEXT_FIELD: query_text}, "top_k": limit}
-        if required_label:
+        if metadata_filter:
+            query["filter"] = metadata_filter
+        elif required_label:
             query["filter"] = {"labels": {"$in": [required_label]}}
         results = await asyncio.to_thread(
             self._index.search_records, _NAMESPACE, query
