@@ -27,6 +27,10 @@ infra/cdk.context.json
 # Claude
 .claude
 
+# Ralph loop
+.ralph-stop
+ralph.log
+
 # JIRA-Ralph loop artifacts
 .jira-ralph-*.stop
 jira-ralph-*.log
