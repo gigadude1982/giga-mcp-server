@@ -1,0 +1,6 @@
+# Gitignored files to copy into each new git worktree (.gitignore syntax).
+# These secrets live outside version control but are needed for the app to run,
+# so worktrees would otherwise start without them.
+.env
+.env.*
+!.env.example
