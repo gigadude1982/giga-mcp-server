@@ -201,7 +201,7 @@ Pinecone powers semantic duplicate detection on new tickets and long-term agent 
 | `GIGA_PINECONE_CODEHISTORY_INDEX_NAME`| `giga-codehistory`   | Index name for the code-history store                                      |
 | `GIGA_CODEHISTORY_SUMMARIZER_MODEL`   | `claude-haiku-4-5-20251001` | Claude model used to summarize merged PRs before embedding                |
 
-When `vectorEnabled` is `false` on a board, the server falls back to the fuzzy-match duplicate detector and the code-history store is skipped. After enabling vector on a board for the first time, run the `backfill_vectors` MCP tool once to seed the index from existing JIRA tickets.
+When `vectorEnabled` is `false` on a board, the server falls back to the fuzzy-match duplicate detector and the code-history store is skipped. After enabling vector on a board for the first time, run the `backfill_tickets` MCP tool once to seed the index from existing JIRA tickets (or `index_ticket` to (re)index a single ticket). Merged PRs are auto-ingested into the code-history store via the `/webhooks/github` webhook; `backfill_code_history` / `index_pr` cover bulk and manual indexing.
 
 The Pinecone indexes themselves are provisioned by `scripts/setup-pinecone.sh --board <boardId>` — see the [provisioning runbook](PROVISIONING-NEW-BOARD.md#8-user-create-pinecone-indexes-skip-if-vectorenabled-false) for the full step-by-step.
 

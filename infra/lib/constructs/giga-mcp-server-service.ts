@@ -186,6 +186,11 @@ export class GigaMcpServerService extends Construct {
               ...(vectorEnabled ? [
                 { name: 'GIGA_PINECONE_API_KEY', value: ssmParamArn('pinecone-api-key') },
               ] : []),
+              ...(codeHistoryEnabled ? [
+                // HMAC secret for verifying GitHub webhook deliveries that
+                // auto-ingest merged PRs into the code-history store.
+                { name: 'GIGA_GITHUB_WEBHOOK_SECRET', value: ssmParamArn('github-webhook-secret') },
+              ] : []),
             ],
           },
         },
