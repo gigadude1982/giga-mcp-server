@@ -31,10 +31,10 @@ Pick once, write down — these get referenced in `boards.ts`, SSM key paths, lo
 
 | Thing                                 | Example                              |
 | ------------------------------------- | ------------------------------------ |
-| Board ID (kebab-case)                 | `punch-tamagotchi`                   |
+| Board ID (kebab-case)                 | `punch-pwa`                          |
 | MCP server name (Claude Desktop name) | `punch-mcp-server`                   |
 | JIRA project key                      | `PUNCH`                              |
-| GitHub repo                           | `gigadude1982/punch-tamagotchi`      |
+| GitHub repo                           | `gigadude1982/punch-pwa`             |
 | MCP server subdomain                  | `mcp.punch.gigacorp.co`              |
 | Pinecone index name                   | `punch-tickets`                      |
 
@@ -74,7 +74,7 @@ Bender writes code into the target repo via the Git Data API — but the target 
 
 Adjust per the target stack. Full schema documented in [README → Repo pipeline config](README.md#repo-pipeline-config-optional).
 
-**For React + PWA targets**, see [`PUNCH-TAMAGOTCHI-PLAN.md`](PUNCH-TAMAGOTCHI-PLAN.md) for a worked example (Vite + React + TS + vite-plugin-pwa + Jest), and the `gigadude1982/punch-tamagotchi` repo as a reference scaffold.
+**For React + PWA targets**, see [`PUNCH-TAMAGOTCHI-PLAN.md`](PUNCH-TAMAGOTCHI-PLAN.md) for a worked example (Vite + React + TS + vite-plugin-pwa + Jest), and the `gigadude1982/punch-pwa` repo as a reference scaffold.
 
 ### 5. `[code]` Add the board to `infra/config/boards.ts`
 
@@ -82,12 +82,12 @@ Append a new entry to the `BOARDS` array:
 
 ```ts
 {
-  boardId: "punch-tamagotchi",
+  boardId: "punch-pwa",
   serverName: "punch-mcp-server",
   jiraProjectKey: "PUNCH",
   jiraUrl: "https://gigacorporation.atlassian.net",
   jiraUsername: "admin@gigacorp.co",
-  githubRepo: "gigadude1982/punch-tamagotchi",
+  githubRepo: "gigadude1982/punch-pwa",
   githubBaseBranch: "main",
   subdomain: "mcp.punch.gigacorp.co",
   vectorEnabled: true,                  // optional; enables Pinecone duplicate detection
@@ -110,14 +110,14 @@ Look for `Service<boardId>...` outputs in the synthesized template (App Runner A
 In the giga-mcp-server repo root (not the target repo), create `.env.<boardId>` with the secrets the pipeline needs. **This file is gitignored — never commit it.**
 
 ```bash
-# .env.punch-tamagotchi
+# .env.punch-pwa
 GIGA_JIRA_URL=https://gigacorporation.atlassian.net
 GIGA_JIRA_USERNAME=admin@gigacorp.co
 GIGA_JIRA_API_TOKEN=<atlassian API token>
 GIGA_JIRA_PROJECT_KEY=PUNCH
 
 GIGA_GITHUB_TOKEN=<github PAT with repo+workflow scopes>
-GIGA_GITHUB_REPO=gigadude1982/punch-tamagotchi
+GIGA_GITHUB_REPO=gigadude1982/punch-pwa
 
 GIGA_ANTHROPIC_API_KEY=sk-ant-...
 

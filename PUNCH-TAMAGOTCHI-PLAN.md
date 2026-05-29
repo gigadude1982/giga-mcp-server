@@ -9,11 +9,11 @@ Started 2026-05-15.
 | Thing                            | Value                              |
 | -------------------------------- | ---------------------------------- |
 | Character name                   | Punch (the monkey)                 |
-| GitHub repo                      | `gigadude1982/punch-tamagotchi`    |
+| GitHub repo                      | `gigadude1982/punch-pwa`           |
 | JIRA project key                 | `PUNCH` (tickets `PUNCH-1`, …)     |
 | PWA app subdomain                | `punch.gigacorp.co`                |
 | MCP server subdomain             | `mcp.punch.gigacorp.co`            |
-| Board ID in `boards.ts`          | `punch-tamagotchi`                 |
+| Board ID in `boards.ts`          | `punch-pwa`                        |
 | MCP server name                  | `punch-mcp-server`                 |
 
 ## Stack (v1 PWA)
@@ -40,7 +40,7 @@ Started 2026-05-15.
 
 User-only steps marked **[user]**. Code changes marked **[code]** can be done by Claude in the next session.
 
-1. **[user]** Create GitHub repo `gigadude1982/punch-tamagotchi` (private or public, your call).
+1. **[user]** Create GitHub repo `gigadude1982/punch-pwa` (private or public, your call).
 2. **[user]** Create JIRA project with key `PUNCH` in the Atlassian instance.
 3. **[code]** Scaffold Vite + React + TS app in the new repo. Add `vite-plugin-pwa` config, manifest stub, basic favicon. Initial commit on `main` so the pipeline has a base branch to fork from.
 4. **[code]** Add `.giga-pipeline.json` to the new repo:
@@ -56,7 +56,7 @@ User-only steps marked **[user]**. Code changes marked **[code]** can be done by
    ```
    (Tests live alongside source for React projects per the existing prompt convention.)
 5. **[code]** ~~Add a board entry to `infra/config/boards.ts`.~~ **Done** — entry added with `vectorEnabled: true` and `jiraUrl` pointing at the gigacorporation Atlassian instance. If PUNCH ends up living in its own Atlassian instance, swap `jiraUrl` + `jiraUsername` before `cdk deploy`.
-6. **[user]** Create `.env.punch-tamagotchi` locally with the board's secrets, then run `scripts/setup-ssm.sh` to push them to SSM as SecureString parameters.
+6. **[user]** Create `.env.punch-pwa` locally with the board's secrets, then run `scripts/setup-ssm.sh` to push them to SSM as SecureString parameters.
 7. **[user]** `cd infra && npx cdk deploy` to provision the new App Runner service.
 8. **[user]** Point `punch.gigacorp.co` DNS at the new App Runner service URL (CNAME record).
 9. **[code]** File `PUNCH-1` ticket — suggested first ticket: "Scaffold game shell with Punch idle sprite, hunger meter, and feed button." Then `process_ticket("PUNCH-1")` and watch the pipeline plan it.
