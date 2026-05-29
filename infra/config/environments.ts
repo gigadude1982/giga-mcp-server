@@ -16,6 +16,3 @@ export const INSTANCE_ROLE_ARN =
 /** App Runner access role — used to pull images from ECR. */
 export const ACCESS_ROLE_ARN =
   'arn:aws:iam::138606625420:role/giga-mcp-server-apprunner-ecr';
-
-/** Existing Cognito user pool — imported by the gigacorp-react board. */
-export const COGNITO_USER_POOL_ID = 'us-east-1_gOIZZz2Eg';
