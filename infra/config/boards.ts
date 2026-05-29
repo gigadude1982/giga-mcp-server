@@ -42,6 +42,7 @@ export const BOARDS: BoardConfig[] = [
     githubRepo: "gigadude1982/gigacorp-react",
     githubBaseBranch: "main",
     subdomain: "mcp.gigacorp.co",
+    enableAuth: true,
     vectorEnabled: true,
     pineconeIndexName: "gigacorp-tickets",
   },
@@ -54,6 +55,7 @@ export const BOARDS: BoardConfig[] = [
     githubRepo: "gigadude1982/pitchvault-react",
     githubBaseBranch: "main",
     subdomain: "mcp.pitchvault.co",
+    enableAuth: true,
     pineconeIndexName: "pitchvault-tickets",
   },
   {
@@ -65,6 +67,7 @@ export const BOARDS: BoardConfig[] = [
     githubRepo: "gigadude1982/punch-pwa",
     githubBaseBranch: "main",
     subdomain: "mcp.punch.gigacorp.co",
+    enableAuth: true,
     vectorEnabled: true,
     pineconeIndexName: "punch-tickets",
     codeHistoryEnabled: true,
