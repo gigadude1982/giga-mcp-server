@@ -55,7 +55,7 @@ export const BOARDS: BoardConfig[] = [
     jiraUsername: "admin@gigacorp.co",
     githubRepo: "gigadude1982/punch-tamagotchi",
     githubBaseBranch: "main",
-    subdomain: "punch.gigacorp.co",
+    subdomain: "mcp.punch.gigacorp.co",
     vectorEnabled: true,
     pineconeIndexName: "punch-tickets",
   },

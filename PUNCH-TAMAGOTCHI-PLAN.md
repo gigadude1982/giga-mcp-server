@@ -11,7 +11,8 @@ Started 2026-05-15.
 | Character name                   | Punch (the monkey)                 |
 | GitHub repo                      | `gigadude1982/punch-tamagotchi`    |
 | JIRA project key                 | `PUNCH` (tickets `PUNCH-1`, …)     |
-| Public subdomain                 | `punch.gigacorp.co`                |
+| PWA app subdomain                | `punch.gigacorp.co`                |
+| MCP server subdomain             | `mcp.punch.gigacorp.co`            |
 | Board ID in `boards.ts`          | `punch-tamagotchi`                 |
 | MCP server name                  | `punch-mcp-server`                 |
 
