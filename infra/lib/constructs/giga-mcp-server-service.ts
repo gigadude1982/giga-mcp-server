@@ -31,6 +31,13 @@ export interface GigaMcpServerServiceProps {
    * pool.  Omit for new boards — CDK will create a dedicated pool.
    */
   existingCognitoUserPoolId?: string;
+  /**
+   * Optional suffix appended to the created pool's userPoolName. Changing it
+   * forces CloudFormation to REPLACE the pool — used to recreate a pool whose
+   * physical resource was deleted out-of-band (drift). Leave unset to keep the
+   * existing pool untouched.
+   */
+  userPoolNameSuffix?: string;
   /** Wire Cognito pool/client IDs into the container env vars to enable JWT auth. */
   enableAuth?: boolean;
   /** Enable Pinecone integrated-inference vector store for semantic duplicate detection. */
@@ -90,6 +97,7 @@ export class GigaMcpServerService extends Construct {
       instanceRoleArn,
       accessRoleArn,
       existingCognitoUserPoolId,
+      userPoolNameSuffix = '',
       enableAuth = false,
       vectorEnabled = false,
       pineconeIndexName = 'giga-tickets',
@@ -109,10 +117,15 @@ export class GigaMcpServerService extends Construct {
       `arn:aws:ssm:${stack.region}:${stack.account}:parameter/giga-mcp-server/${boardId}/${name}`;
 
     // ── Cognito ─────────────────────────────────────────────────────────────
+    // A non-empty suffix changes BOTH the userPoolName and the construct's
+    // logical ID, so CloudFormation creates a brand-new pool and removes the old
+    // logical resource (RemovalPolicy.RETAIN makes it skip deleting the gone
+    // physical) — an in-place UserPoolName update would fail on a deleted pool.
+    const poolId = `UserPool${userPoolNameSuffix.replace(/[^A-Za-z0-9]/g, '')}`;
     this.userPool = existingCognitoUserPoolId
-      ? cognito.UserPool.fromUserPoolId(this, 'UserPool', existingCognitoUserPoolId)
-      : new cognito.UserPool(this, 'UserPool', {
-          userPoolName: `${prefix}-users`,
+      ? cognito.UserPool.fromUserPoolId(this, poolId, existingCognitoUserPoolId)
+      : new cognito.UserPool(this, poolId, {
+          userPoolName: `${prefix}-users${userPoolNameSuffix}`,
           selfSignUpEnabled: false,
           signInAliases: { email: true },
           passwordPolicy: {
