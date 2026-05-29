@@ -23,6 +23,11 @@ _DEFAULTS: dict[str, Any] = {
     "branch_prefix": "auto/",
     "write_tests": True,
     "pipeline_model": None,  # None = use server default (claude-sonnet-4-6)
+    # Hybrid code-history retrieval: vector finds top-k similar PRs by summary,
+    # then fetch the actual patches from GitHub so agents see real code, not
+    # lossy summaries. Costs extra GH API calls per pipeline run; opt-in.
+    "code_history_hybrid": False,
+    "code_history_diff_chars_per_hit": 3000,
 }
 
 
@@ -39,6 +44,8 @@ class RepoConfig:
     branch_prefix: str = "auto/"
     write_tests: bool = True
     pipeline_model: str | None = None  # overrides _PIPELINE_MODEL in agent_runner
+    code_history_hybrid: bool = False
+    code_history_diff_chars_per_hit: int = 3000
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], default_max_retries: int = 3) -> RepoConfig:
@@ -56,6 +63,8 @@ class RepoConfig:
             branch_prefix=merged["branch_prefix"],
             write_tests=merged["write_tests"],
             pipeline_model=merged["pipeline_model"],
+            code_history_hybrid=merged["code_history_hybrid"],
+            code_history_diff_chars_per_hit=merged["code_history_diff_chars_per_hit"],
         )
 
     @classmethod

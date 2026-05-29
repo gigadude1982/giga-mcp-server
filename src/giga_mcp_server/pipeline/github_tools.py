@@ -473,6 +473,54 @@ class GitHubClient:
             "merged": pr.get("merged_at") is not None,
         }
 
+    async def get_pr_diff(
+        self,
+        pr_number: int,
+        *,
+        file_filter: str | None = None,
+        max_chars: int = 3000,
+    ) -> str:
+        """Fetch the unified diff for a PR, optionally narrowed to a single file.
+
+        Used by the hybrid code-history retrieval path — vector search finds
+        the top-k similar PRs by summary, then this method pulls the actual
+        patch so the agents can ground generation in real code, not summaries.
+
+        file_filter: if given, return only the patch for that file. Returns
+                     empty string when the PR didn't touch the file.
+        max_chars:   hard cap on returned size. Truncates with a trailing
+                     "... [truncated, N more chars]" marker so the model knows
+                     it's not seeing the full diff. Set to 0 for no cap.
+        """
+        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}/files"
+        try:
+            async with httpx.AsyncClient(headers=self._headers, timeout=30.0) as client:
+                resp = await client.get(url, params={"per_page": "100"})
+                resp.raise_for_status()
+                files = resp.json()
+        except Exception as e:
+            logger.warning("pr_diff_fetch_failed", pr=pr_number, error=str(e))
+            return ""
+
+        chunks: list[str] = []
+        for f in files:
+            filename = f.get("filename", "")
+            if file_filter and filename != file_filter:
+                continue
+            patch = f.get("patch")
+            if not patch:
+                # Binary file or patch too large for GitHub to return inline
+                continue
+            chunks.append(f"=== {filename} ===\n{patch}")
+            if file_filter:
+                break  # Only one file wanted; stop after we find it
+
+        diff = "\n\n".join(chunks)
+        if max_chars and len(diff) > max_chars:
+            remainder = len(diff) - max_chars
+            diff = diff[:max_chars] + f"\n... [truncated, {remainder} more chars]"
+        return diff
+
     async def poll_pr_until_complete(
         self,
         pr_number: int,
