@@ -72,7 +72,7 @@ if [[ -n "$BOARD_FILTER" ]]; then
 else
   setup_board "gigacorp-react"
   setup_board "pitchvault-react"
-  setup_board "punch-tamagotchi"
+  setup_board "punch-pwa"
 fi
 
 echo ""

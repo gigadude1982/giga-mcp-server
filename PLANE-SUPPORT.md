@@ -10,7 +10,7 @@ A board entry in `infra/config/boards.ts` should be able to say:
 
 ```ts
 {
-  boardId: "punch-tamagotchi",
+  boardId: "punch-pwa",
   trackerType: "plane",                    // ← new field
   trackerUrl: "https://plane.gigacorp.co", // or app.plane.so
   trackerWorkspace: "gigacorp",

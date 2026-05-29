@@ -10,10 +10,10 @@ A board entry in `infra/config/boards.ts` should be able to say:
 
 ```ts
 {
-  boardId: "punch-tamagotchi",
+  boardId: "punch-pwa",
   vcsType: "bitbucket",                     // ← new field
   vcsBaseUrl: "https://api.bitbucket.org/2.0", // or self-hosted Server URL
-  vcsRepo: "gigadude1982/punch-tamagotchi",    // workspace/slug for BB, owner/repo for GH/GL
+  vcsRepo: "gigadude1982/punch-pwa",           // workspace/slug for BB, owner/repo for GH/GL
   vcsBaseBranch: "main",
   ...
 }
