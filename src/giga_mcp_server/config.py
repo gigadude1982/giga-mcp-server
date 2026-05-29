@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     github_token: str = Field(default="", description="GitHub PAT (repo + workflow scopes)")
     github_repo: str = Field(default="", description="Target repo in owner/repo format")
     github_base_branch: str = "main"
+    # Shared secret for verifying GitHub webhook deliveries (HMAC-SHA256). When set,
+    # the /webhooks/github route auto-ingests merged PRs into the code-history store.
+    github_webhook_secret: str = ""
     # TODO: replace with a dedicated GitHub bot account (e.g. giga-bot) once IaC and Auth
     # are complete. A bot account will show a proper bot badge in GitHub UI. For now, commits
     # are attributed to the PAT owner but authored as the name/email below.
