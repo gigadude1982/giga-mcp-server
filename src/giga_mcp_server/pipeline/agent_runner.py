@@ -26,7 +26,22 @@ class AgentRunner:
 
     def __init__(self, api_key: str, model: str = _PIPELINE_MODEL) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        # Fallback model for any agent without an explicit per-stage `model`.
         self.model = model
+        # When set (e.g. from a repo's .giga-pipeline.json `pipeline_model`),
+        # forces EVERY stage onto this model, ignoring per-stage assignments.
+        self.model_override: str | None = None
+
+    def resolve_model(self, agent_name: str) -> str:
+        """Pick the model for an agent.
+
+        Precedence: explicit ``model_override`` (a repo's pipeline_model) >
+        the agent's per-stage ``model`` > the runner default. Note the override
+        must be reset to None between runs by the caller (the orchestrator is a
+        long-lived shared instance) or it leaks across tickets.
+        """
+        config = AGENT_REGISTRY.get(agent_name, {})
+        return self.model_override or config.get("model") or self.model
 
     async def run(self, agent_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
         """Run a named agent, returning validated output.
@@ -40,6 +55,7 @@ class AgentRunner:
                              f"Available: {list(AGENT_REGISTRY)}")
 
         config = AGENT_REGISTRY[agent_name]
+        model = self.resolve_model(agent_name)
         self._validate_schema(input_data, config["input_schema"], context=f"{agent_name}.input")
 
         user_message = json.dumps(input_data, indent=2)
@@ -49,7 +65,7 @@ class AgentRunner:
         for attempt in range(1, _MAX_PARSE_RETRIES + 1):
             try:
                 response = await self._client.messages.create(
-                    model=self.model,
+                    model=model,
                     max_tokens=_MAX_TOKENS,
                     system=config["system_prompt"],
                     messages=messages,

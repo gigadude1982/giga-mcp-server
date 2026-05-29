@@ -102,8 +102,11 @@ class PipelineOrchestrator:
                 self._settings.github_base_branch,
                 default_max_retries=self._settings.pipeline_max_retries,
             )
-            if config.pipeline_model:
-                self._runner.model = config.pipeline_model
+            # Set (or CLEAR) the override every run. The orchestrator is a
+            # long-lived shared instance, so assigning None when this repo has no
+            # pipeline_model is required — otherwise a prior run's override leaks
+            # in and forces every stage onto the wrong model.
+            self._runner.model_override = config.pipeline_model
             await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
         except _HaltError as e:
             state.status = "halted"
@@ -217,8 +220,11 @@ class PipelineOrchestrator:
                 config.coding_standards = (
                     f"{config.coding_standards}\n\nFormatter configs from repo:\n{formatter_configs}"
                 )
-            if config.pipeline_model:
-                self._runner.model = config.pipeline_model
+            # Set (or CLEAR) the override every run. The orchestrator is a
+            # long-lived shared instance, so assigning None when this repo has no
+            # pipeline_model is required — otherwise a prior run's override leaks
+            # in and forces every stage onto the wrong model.
+            self._runner.model_override = config.pipeline_model
             await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"

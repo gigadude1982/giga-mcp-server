@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import structlog
@@ -9,6 +10,75 @@ from atlassian import Jira
 from giga_mcp_server.config import Settings
 from giga_mcp_server.models import IdeaResult, ParsedIdea
 from giga_mcp_server.retry import async_retry
+
+
+_FENCE_RE = re.compile(r"^```(\w*)\s*$")
+
+
+def _inline_md_to_wiki(text: str) -> str:
+    """Convert inline Markdown spans to JIRA wiki markup."""
+    # [text](url) -> [text|url]
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"[\1|\2]", text)
+    # **bold** / __bold__ -> *bold*
+    text = re.sub(r"\*\*([^*]+)\*\*", r"*\1*", text)
+    text = re.sub(r"__([^_]+)__", r"*\1*", text)
+    # `code` -> {{code}}
+    text = re.sub(r"`([^`]+)`", r"{{\1}}", text)
+    return text
+
+
+def markdown_to_jira_wiki(md: str) -> str:
+    """Convert Markdown to JIRA wiki markup.
+
+    The atlassian-python-api posts descriptions/comments to JIRA's v2 REST API,
+    which interprets the body as *wiki markup* — so a Markdown heading like
+    ``## Requirements`` is read as ``#`` (nested ordered list) and renders as a
+    mangled ``1. a.`` list. This converts the common Markdown the AI agents emit
+    (headings, bold, lists, inline/fenced code, links) into the wiki equivalents
+    so JIRA renders proper headings and bullet lists. Content inside fenced code
+    blocks is passed through untouched.
+    """
+    if not md:
+        return md
+
+    out: list[str] = []
+    in_fence = False
+    for line in md.splitlines():
+        fence = _FENCE_RE.match(line.strip())
+        if fence:
+            if not in_fence:
+                lang = fence.group(1)
+                out.append(f"{{code:{lang}}}" if lang else "{code}")
+                in_fence = True
+            else:
+                out.append("{code}")
+                in_fence = False
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if heading:
+            level = len(heading.group(1))
+            out.append(f"h{level}. {_inline_md_to_wiki(heading.group(2).strip())}")
+            continue
+
+        bullet = re.match(r"^(\s*)[-*+]\s+(.*)$", line)
+        if bullet:
+            depth = len(bullet.group(1)) // 2 + 1
+            out.append("*" * depth + " " + _inline_md_to_wiki(bullet.group(2)))
+            continue
+
+        numbered = re.match(r"^(\s*)\d+\.\s+(.*)$", line)
+        if numbered:
+            depth = len(numbered.group(1)) // 2 + 1
+            out.append("#" * depth + " " + _inline_md_to_wiki(numbered.group(2)))
+            continue
+
+        out.append(_inline_md_to_wiki(line))
+
+    return "\n".join(out)
 
 
 def _adf_to_text(node: Any) -> str:
@@ -98,7 +168,7 @@ class JiraClient:
         fields: dict[str, Any] = {
             "project": {"key": self._settings.jira_project_key},
             "summary": idea.summary,
-            "description": idea.description,
+            "description": markdown_to_jira_wiki(idea.description),
             "issuetype": {"name": resolved_issue_type},
             "priority": {"name": idea.priority or self._settings.jira_default_priority},
         }
@@ -305,6 +375,10 @@ class JiraClient:
     async def update_issue(self, issue_key: str, fields: dict[str, Any]) -> bool:
         """Update fields on an existing JIRA issue."""
         try:
+            # Description is wiki markup on JIRA's v2 API — convert Markdown so
+            # agent-generated bodies render as proper headings/lists, not 1./a.
+            if isinstance(fields.get("description"), str):
+                fields = {**fields, "description": markdown_to_jira_wiki(fields["description"])}
             logger.info("updating_issue", issue_key=issue_key, fields=list(fields.keys()))
             await asyncio.to_thread(self._jira.update_issue_field, issue_key, fields)
             return True
@@ -324,7 +398,7 @@ class JiraClient:
             "project": {"key": self._settings.jira_project_key},
             "parent": {"key": parent_key},
             "summary": summary,
-            "description": description,
+            "description": markdown_to_jira_wiki(description),
             "issuetype": {"name": "Sub-task"},
         }
         logger.info("creating_subtask", parent=parent_key, summary=summary)

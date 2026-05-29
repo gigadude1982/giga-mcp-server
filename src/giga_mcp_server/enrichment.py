@@ -53,6 +53,9 @@ Guidelines:
 - Infer labels from context (e.g., "login page" → "auth", "API endpoint" → "api")
 - Write clear acceptance criteria in Given/When/Then format
 - Preserve the original description content in enriched_description, expanding with detail
+- Format the enriched_description value as Markdown: use "## " for section headings \
+(e.g. Summary, Requirements, Acceptance Criteria), "- " for bullet points, and "**bold**" \
+for emphasis. (Do NOT wrap the JSON response itself in markdown — only the field's text.)
 - If existing_issues are provided, check for semantic duplicates and set duplicate_of to the issue key
 - Keep subtask summaries concise and actionable
 """
@@ -76,6 +79,9 @@ Guidelines:
 - Write a clear, actionable summary (not the raw input — refine it)
 - Expand the description with context, steps, and expected behavior
 - Include acceptance criteria in the description using Given/When/Then format
+- Format the description value as Markdown: use "## " for section headings \
+(e.g. Summary, Requirements, Acceptance Criteria), "- " for bullet points, and "**bold**" \
+for emphasis. (Do NOT wrap the JSON response itself in markdown — only the field's text.)
 - If the input mentions a bug, crash, error, or broken feature → issue_type = "Bug"
 - If it's a chore, cleanup, maintenance, or infra → issue_type = "Task"
 - Default to "Story" for new features
