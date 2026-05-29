@@ -192,6 +192,8 @@ Pinecone powers semantic duplicate detection on new tickets and long-term agent 
 
 When `vectorEnabled` is `false` on a board, the server falls back to the fuzzy-match duplicate detector and the code-history store is skipped. After enabling vector on a board for the first time, run the `backfill_vectors` MCP tool once to seed the index from existing JIRA tickets.
 
+The Pinecone indexes themselves are provisioned by `scripts/setup-pinecone.sh --board <boardId>` — see the [provisioning runbook](PROVISIONING-NEW-BOARD.md#8-user-create-pinecone-indexes-skip-if-vectorenabled-false) for the full step-by-step.
+
 ### Repo pipeline config (optional)
 
 Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
@@ -312,10 +314,11 @@ See [`PROVISIONING-NEW-BOARD.md`](PROVISIONING-NEW-BOARD.md) for the full step-b
 2. Scaffold the target repo (working build, test runner, `.giga-pipeline.json`)
 3. Add a new entry to `infra/config/boards.ts`
 4. Create `.env.<boardId>` locally and run `./scripts/setup-ssm.sh --board <boardId>` to push secrets to SSM
-5. `cd infra && npx cdk deploy`
-6. Point the subdomain CNAME at the new App Runner URL
-7. Copy `jira-done-on-merge.yml` into the target repo and add the JIRA secrets there
-8. File the first ticket and run `process_ticket`
+5. Create the Pinecone indexes via `./scripts/setup-pinecone.sh --board <boardId>` (skip if `vectorEnabled: false`)
+6. `cd infra && npx cdk deploy`
+7. Point the subdomain CNAME at the new App Runner URL
+8. Copy `jira-done-on-merge.yml` into the target repo and add the JIRA secrets there
+9. File the first ticket and run `process_ticket`
 
 The runbook also documents what gets provisioned per board (App Runner service, Cognito pool, IAM role, custom domain) versus what's shared (ECR, Pinecone account, Anthropic key, AWS account).
 
@@ -335,6 +338,7 @@ Neither is implemented yet — the docs capture the design before context decays
 | `scripts/inspect-local.sh`         | Launch MCP Inspector with local mock server                      |
 | `scripts/inspect-remote.sh`        | Launch MCP Inspector for a remote board (`--board pitchvault`)   |
 | `scripts/setup-ssm.sh`             | Create/update SSM SecureString params from `.env.<boardId>` files |
+| `scripts/setup-pinecone.sh`        | Create Pinecone integrated-inference indexes for a board (idempotent) |
 | `scripts/setup-auth.sh`            | Set up Cognito auth (create pool, client, test user, get tokens) |
 | `scripts/migrate-gigacorp-domain.sh` | Migrate mcp.gigacorp.co from old to new App Runner service     |
 

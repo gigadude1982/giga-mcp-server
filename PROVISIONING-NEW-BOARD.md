@@ -143,7 +143,19 @@ aws ssm describe-parameters \
 
 You should see four parameters: `jira-api-token`, `anthropic-api-key`, `github-token`, `pinecone-api-key`.
 
-### 8. `[user]` `cdk deploy`
+### 8. `[user]` Create Pinecone indexes (skip if `vectorEnabled: false`)
+
+```bash
+./scripts/setup-pinecone.sh --board <boardId>
+```
+
+Reads `GIGA_PINECONE_API_KEY` + `GIGA_PINECONE_INDEX_NAME` (and optionally `GIGA_PINECONE_CODEHISTORY_INDEX_NAME`) from `.env.<boardId>`, then creates each integrated-inference index in Pinecone via `POST /indexes/create-for-model` if it doesn't already exist. Idempotent — safe to re-run.
+
+Defaults: `llama-text-embed-v2` embedding model on `aws / us-east-1`. Override via `PINECONE_EMBED_MODEL`, `PINECONE_CLOUD`, `PINECONE_REGION` env vars if needed.
+
+**Skip this step** when `vectorEnabled: false` on the board — the server will fall back to the fuzzy-match duplicate detector and no Pinecone index is required.
+
+### 9. `[user]` `cdk deploy`
 
 ```bash
 cd infra
@@ -157,11 +169,11 @@ Capture two outputs from the deploy summary:
 - `Service<boardId>DefaultUrl` — the App Runner-assigned URL, e.g. `https://abc123.us-east-1.awsapprunner.com`. This is the CNAME target for the next step.
 - `Service<boardId>CognitoUserPoolId` / `…AppClientId` — needed if you want OAuth-protected MCP connections.
 
-### 9. `[user]` Configure DNS
+### 10. `[user]` Configure DNS
 
 In the DNS zone for your parent domain (e.g. `gigacorp.co` in Route 53 or wherever your DNS lives):
 
-- Add a `CNAME` record: `<subdomain>` → the App Runner default URL from step 8 (strip the `https://`).
+- Add a `CNAME` record: `<subdomain>` → the App Runner default URL from step 9 (strip the `https://`).
 - TTL 300 is fine for initial setup; bump to 3600 once stable.
 
 App Runner's custom domain association will also provision an ACM certificate automatically — wait ~5 minutes for it to validate, then the subdomain should serve the new service.
@@ -174,7 +186,7 @@ curl -I https://<subdomain>/health
 
 Look for `200 OK` with the App Runner health response.
 
-### 10. `[user]` Add Bitbucket / GitHub auto-close workflow to target repo
+### 11. `[user]` Add Bitbucket / GitHub auto-close workflow to target repo
 
 Copy `.github/workflows/jira-done-on-merge.yml` from giga-mcp-server to the new target repo (in `.github/workflows/`). Add three secrets to the target repo's GitHub Actions secrets:
 
@@ -186,7 +198,7 @@ Once added, merging any PR with a JIRA key in the title or body (`PUNCH-1`, `[PU
 
 > Note: this is GitHub-Actions-specific. For Bitbucket or GitLab targets, see [`BITBUCKET-SUPPORT.md`](BITBUCKET-SUPPORT.md) for the alternative (JIRA Automation rules work cleaner than a custom Pipeline).
 
-### 11. `[code]` File the first ticket and run the pipeline
+### 12. `[code]` File the first ticket and run the pipeline
 
 In JIRA, create the first ticket (`<KEY>-1`). Keep the scope small — the pipeline does best on tightly scoped tickets. Example for a new React+PWA target:
 
