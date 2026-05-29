@@ -30,7 +30,7 @@ def test_reports_feature_flags():
         codehistory_enabled=True, pinecone_codehistory_index_name="x-ch",
         cognito_user_pool_id="",
     )))
-    assert "Vector store: enabled · index `x-tickets`" in out
+    assert "Ticket store: enabled · index `x-tickets`" in out
     assert "Code-history store: enabled · index `x-ch`" in out
     assert "Auth (Cognito): disabled" in out
 

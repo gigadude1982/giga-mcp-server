@@ -237,7 +237,7 @@ async def get_server_info(ctx: Context = None) -> str:
         "**Features**",
         f"- Auth (Cognito): {on(s.auth_enabled)}"
         + (f" · pool `{s.cognito_user_pool_id}`" if s.auth_enabled else ""),
-        f"- Vector store: {on(s.vector_enabled)}"
+        f"- Ticket store: {on(s.vector_enabled)}"
         + (f" · index `{s.pinecone_index_name}`" if s.vector_enabled else ""),
         f"- Code-history store: {on(s.codehistory_enabled)}"
         + (f" · index `{s.pinecone_codehistory_index_name}`" if s.codehistory_enabled else ""),
