@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Wire Claude Desktop to one (or all) board's remote MCP server.
+# Wire Claude Desktop to one (or all) board's remote MCP server, then launch it.
 #
 # Mints a fresh 24h Cognito access token for the board's demo user and writes a
 # matching `mcpServers.<board>` entry into the Claude Desktop config. The entry
@@ -8,13 +8,16 @@
 # don't inherit your nvm PATH), and trusts the corporate CA bundle so TLS
 # verifies even behind a Zscaler-style inspection proxy.
 #
+# Once the config is written, it (re)launches Claude Desktop so the new token(s)
+# take effect — no manual restart needed. Pass --no-launch to skip this.
+#
 # All board-specific values (URL, Cognito client, demo creds) are read from the
 # gitignored `.env.<board>` — this script contains NO secrets.
 #
 # Usage:
-#   ./scripts/connect-claude-desktop.sh --board <boardId>   # one board
-#   ./scripts/connect-claude-desktop.sh --all               # every board with a connection block
-# After it runs, fully restart Claude Desktop to pick up the new token(s).
+#   ./scripts/launch-claude-desktop.sh --board <boardId>   # one board
+#   ./scripts/launch-claude-desktop.sh --all               # every board with a connection block
+#   ./scripts/launch-claude-desktop.sh --board <boardId> --no-launch   # write config only
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,13 +25,15 @@ CFG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 CA_BUNDLE="$HOME/node-ca-bundle.pem"
 BOARD=""
 ALL=false
+LAUNCH=true
 
-usage() { echo "Usage: $0 --board <boardId> | --all"; }
+usage() { echo "Usage: $0 --board <boardId> | --all [--no-launch]"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --board) BOARD="${2:-}"; shift 2 ;;
     --all) ALL=true; shift ;;
+    --no-launch) LAUNCH=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -124,4 +129,21 @@ else
   connect_board "$BOARD"
 fi
 
-echo "✓ Done. Fully restart Claude Desktop to apply."
+if $LAUNCH; then
+  # A running instance caches the old config, so quit it before relaunching.
+  echo "  (re)launching Claude Desktop ..."
+  osascript -e 'tell application "Claude" to quit' >/dev/null 2>&1 || true
+  # Give it a moment to fully exit before reopening.
+  for _ in 1 2 3 4 5; do
+    pgrep -x "Claude" >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if pgrep -x "Claude" >/dev/null 2>&1; then
+    echo "ERROR: Claude Desktop is still running; quit it manually and re-run." >&2
+    exit 1
+  fi
+  open -a "Claude"
+  echo "✓ Done. Claude Desktop launched with the new token(s)."
+else
+  echo "✓ Done. Fully restart Claude Desktop to apply."
+fi
