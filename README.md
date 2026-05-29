@@ -210,7 +210,9 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
   "human_gate_after_planner": true,
   "branch_prefix": "auto/",
   "write_tests": true,
-  "pipeline_model": null
+  "pipeline_model": null,
+  "code_history_hybrid": false,
+  "code_history_diff_chars_per_hit": 3000
 }
 ```
 
@@ -218,6 +220,8 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
 | ----- | ------- | ----------- |
 | `write_tests` | `true` | Whether the pipeline generates a test file alongside implementation |
 | `pipeline_model` | `null` | Override the Claude model used by the pipeline (default: `claude-sonnet-4-6`) |
+| `code_history_hybrid` | `false` | When `true` and `GIGA_CODEHISTORY_ENABLED` is on, the implementer/validator receive the **actual GitHub diff** for each retrieved past PR — not just the Haiku summary. Costs one extra GitHub API call per hit per pipeline run; trade-off is better grounding in real code. Opt-in. |
+| `code_history_diff_chars_per_hit` | `3000` | Per-hit cap on diff size when `code_history_hybrid` is on. Validator hits get half this budget (`/2`) since it receives 5 hits vs the implementer's 3. Truncation is marked inline so the model knows it's partial. |
 
 If the file is absent, sensible defaults are used. The pipeline also auto-fetches `.prettierrc`, `.eslintrc`, and `.editorconfig` from the repo and appends them to `coding_standards` so the implementer knows the exact formatting rules.
 
@@ -328,8 +332,9 @@ Two design spikes are captured for making the JIRA and GitHub dependencies plugg
 
 - [`PLANE-SUPPORT.md`](PLANE-SUPPORT.md) — JIRA → Plane (free OSS tracker), ~3-4 day spike
 - [`BITBUCKET-SUPPORT.md`](BITBUCKET-SUPPORT.md) — GitHub → Bitbucket Cloud / GitLab, ~4-5 day spike
+- [`MULTI-CLIENT-INTEGRATION.md`](MULTI-CLIENT-INTEGRATION.md) — exposing the deployed MCP server to ChatGPT, Cursor, Teams, Slack, Discord, etc. (native MCP clients work today; bridge bots are ~1-2 day spikes each)
 
-Neither is implemented yet — the docs capture the design before context decays.
+None of these are implemented yet — the docs capture the design before context decays.
 
 ## Scripts
 

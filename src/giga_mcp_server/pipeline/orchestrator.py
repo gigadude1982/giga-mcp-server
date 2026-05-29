@@ -17,6 +17,7 @@ from giga_mcp_server.pipeline.jira_bridge import (
     transition_ticket,
 )
 from giga_mcp_server.pipeline.repo_config import RepoConfig, load_repo_config
+from giga_mcp_server.vector import CodeHistoryStore
 
 logger = structlog.get_logger()
 
@@ -70,9 +71,11 @@ class PipelineOrchestrator:
         self,
         settings: Settings,
         jira_client: JiraClient,
+        code_history: CodeHistoryStore | None = None,
     ) -> None:
         self._settings = settings
         self._jira = jira_client
+        self._code_history = code_history
         self._runner = AgentRunner(api_key=settings.anthropic_api_key)
         self._config_model: str | None = None  # set after config is loaded
         self._github = GitHubClient(
@@ -259,6 +262,16 @@ class PipelineOrchestrator:
             branch=self._settings.github_base_branch,
         )
 
+        # Long-term memory: similar past PRs as a calibration signal for the
+        # validator. Spec is immutable for this run, so fetch once.
+        # Validator uses a smaller per-hit diff cap because it gets 5 hits.
+        past_review_signals = await self._fetch_history(
+            query_text=spec.get("summary", ""),
+            limit=5,
+            hybrid=config.code_history_hybrid,
+            diff_chars_per_hit=config.code_history_diff_chars_per_hit // 2,
+        )
+
         validation: dict = {}
         impl_outputs: list = []
         test_outputs: list = []
@@ -309,13 +322,16 @@ class PipelineOrchestrator:
             impl_map = {o["path"]: o["content"] for o in impl_outputs}
             test_map = {o["path"]: o["content"] for o in test_outputs}
 
+            validator_input: dict[str, Any] = {
+                "spec": spec,
+                "implementation_files": impl_map,
+                "test_files": test_map,
+                "coding_standards": config.coding_standards,
+            }
+            if past_review_signals:
+                validator_input["past_review_signals"] = past_review_signals
             validation = await _with_retry(
-                lambda: self._runner.run("validator", {
-                    "spec": spec,
-                    "implementation_files": impl_map,
-                    "test_files": test_map,
-                    "coding_standards": config.coding_standards,
-                }),
+                lambda: self._runner.run("validator", validator_input),
                 max_retries,
                 "validator",
             )
@@ -549,7 +565,18 @@ class PipelineOrchestrator:
         path = file_spec["path"]
         related = {k: v for k, v in existing_contents.items() if k != path}
 
-        input_data = {
+        history_query = (
+            f"{file_spec.get('reason', '')} {plan.get('approach', '')} {path}"
+        ).strip()
+        historical_examples = await self._fetch_history(
+            query_text=history_query,
+            limit=3,
+            file_path=path,
+            hybrid=config.code_history_hybrid,
+            diff_chars_per_hit=config.code_history_diff_chars_per_hit,
+        )
+
+        input_data: dict[str, Any] = {
             "path": path,
             "action": file_spec.get("action", "modify"),
             "reason": file_spec.get("reason", ""),
@@ -561,6 +588,8 @@ class PipelineOrchestrator:
         }
         if validator_feedback:
             input_data["validator_feedback"] = validator_feedback
+        if historical_examples:
+            input_data["historical_examples"] = historical_examples
 
         return await _with_retry(
             lambda: self._runner.run("implementer", input_data), max_retries, f"implementer:{path}"
@@ -594,6 +623,65 @@ class PipelineOrchestrator:
         return await _with_retry(
             lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
         )
+
+    async def _fetch_history(
+        self,
+        query_text: str,
+        *,
+        limit: int = 5,
+        file_path: str | None = None,
+        hybrid: bool = False,
+        diff_chars_per_hit: int = 3000,
+    ) -> list[dict[str, Any]]:
+        """Vector-search the code-history store for relevant past PRs.
+
+        Returns a small dict per hit with the fields the agents actually need.
+        No-op (returns []) when code_history is not configured, so the pipeline
+        runs identically with or without long-term memory enabled.
+
+        hybrid: when True, fetch the actual patch from GitHub for each hit
+                and attach as `diff`. Costs one GH API call per hit. When
+                file_path is also set, the patch is narrowed to that file.
+                Useful for the implementer (file-scoped) and validator
+                (spec-scoped) so they ground generation in real code, not
+                Haiku summaries.
+        diff_chars_per_hit: hard cap on the diff size for each hit. Truncation
+                            is marked inline so the model knows it's partial.
+        """
+        if not self._code_history:
+            return []
+        if not query_text.strip():
+            return []
+        try:
+            hits = await self._code_history.search_similar(
+                query_text=query_text,
+                limit=limit,
+                kind="commit",
+                file_path=file_path,
+            )
+        except Exception as e:
+            logger.warning("code_history_search_failed", error=str(e))
+            return []
+
+        results: list[dict[str, Any]] = []
+        for h in hits:
+            entry: dict[str, Any] = {
+                "summary": h.get("text", ""),
+                "title": h.get("title", ""),
+                "pr_number": h.get("pr_number", 0),
+                "files": h.get("files", []),
+                "ticket_key": h.get("ticket_key", ""),
+            }
+            if hybrid and entry["pr_number"]:
+                # Best-effort diff fetch — silently skip on error so the hit's
+                # summary is still useful even when the GitHub call fails.
+                entry["diff"] = await self._github.get_pr_diff(
+                    entry["pr_number"],
+                    file_filter=file_path,
+                    max_chars=diff_chars_per_hit,
+                )
+            results.append(entry)
+        return results
 
     async def _fetch_backlog_examples(
         self, exclude_key: str, limit: int = 5
