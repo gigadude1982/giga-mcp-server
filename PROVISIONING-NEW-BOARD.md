@@ -90,8 +90,10 @@ Append a new entry to the `BOARDS` array:
   githubRepo: "gigadude1982/punch-pwa",
   githubBaseBranch: "main",
   subdomain: "mcp.punch.gigacorp.co",
-  vectorEnabled: true,                  // optional; enables Pinecone duplicate detection
-  pineconeIndexName: "punch-tickets",   // required if vectorEnabled
+  vectorEnabled: true,                          // optional; Pinecone duplicate detection
+  pineconeIndexName: "punch-tickets",           // required if vectorEnabled
+  codeHistoryEnabled: true,                     // optional; long-term agent memory of merged PRs
+  pineconeCodehistoryIndexName: "punch-codehistory", // required if codeHistoryEnabled
 },
 ```
 
