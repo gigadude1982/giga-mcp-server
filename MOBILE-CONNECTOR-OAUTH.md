@@ -2,7 +2,7 @@
 
 > **Status: NOT IMPLEMENTED. Desired before the demo if time allows.**
 > Today a board's MCP server can only be reached from **Claude Desktop** (via
-> `scripts/connect-claude-desktop.sh`, which bridges with `mcp-remote` + a static
+> `scripts/launch-claude-desktop.sh`, which bridges with `mcp-remote` + a static
 > Cognito bearer token). The **Claude iPhone app and claude.ai web** cannot use
 > that path — they connect through account-level **Connectors**, which speak
 > OAuth 2.0 and have no field for a static bearer header.
