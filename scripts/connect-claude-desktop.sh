@@ -108,14 +108,18 @@ PY
 if $ALL; then
   shopt -s nullglob
   count=0
+  failures=0
   for f in "$REPO_ROOT"/.env.*; do
     b="${f##*/.env.}"
     [[ "$b" == "example" ]] && continue
     grep -qE "^MCP_REMOTE_URL=" "$f" || continue   # only boards with a connection block
-    connect_board "$b" || true
+    if ! connect_board "$b"; then
+      failures=$((failures + 1))
+    fi
     count=$((count + 1))
   done
   [[ "$count" -eq 0 ]] && { echo "No boards with an MCP_* connection block found." >&2; exit 1; }
+  [[ "$failures" -eq 0 ]] || { echo "ERROR: $failures board(s) failed to connect." >&2; exit 1; }
 else
   connect_board "$BOARD"
 fi
