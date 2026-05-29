@@ -177,6 +177,23 @@ cp .env.example .env
 | `GIGA_JIRA_INTAKE_STATUS`      | `To Do`                     | Status assigned to newly created tickets                |
 | `GIGA_JIRA_PROCESSED_LABEL`    | `ai-processed`              | Label added to enriched tickets                         |
 
+### Vector store settings (Pinecone — optional but recommended)
+
+Pinecone powers semantic duplicate detection on new tickets and long-term agent memory of merged PRs (a.k.a. code-history). Enable per-board via `vectorEnabled: true` in `boards.ts`. The index must use Pinecone's [integrated inference](https://docs.pinecone.io/guides/inference/understanding-inference) (the embedding model lives on Pinecone's side so the server only sends raw text).
+
+| Variable                              | Default              | Description                                                                |
+| ------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| `GIGA_VECTOR_ENABLED`                 | `false`              | Master switch for the ticket vector store. Set `true` to use Pinecone     |
+| `GIGA_PINECONE_API_KEY`               | —                    | Required when `GIGA_VECTOR_ENABLED=true`                                   |
+| `GIGA_PINECONE_INDEX_NAME`            | `giga-tickets`       | Per-board index name. Must be an integrated-inference index that exists in Pinecone before the server starts |
+| `GIGA_CODEHISTORY_ENABLED`            | `false`              | Master switch for long-term agent memory of merged PRs                     |
+| `GIGA_PINECONE_CODEHISTORY_INDEX_NAME`| `giga-codehistory`   | Index name for the code-history store                                      |
+| `GIGA_CODEHISTORY_SUMMARIZER_MODEL`   | `claude-haiku-4-5-20251001` | Claude model used to summarize merged PRs before embedding                |
+
+When `vectorEnabled` is `false` on a board, the server falls back to the fuzzy-match duplicate detector and the code-history store is skipped. After enabling vector on a board for the first time, run the `backfill_vectors` MCP tool once to seed the index from existing JIRA tickets.
+
+The Pinecone indexes themselves are provisioned by `scripts/setup-pinecone.sh --board <boardId>` — see the [provisioning runbook](PROVISIONING-NEW-BOARD.md#8-user-create-pinecone-indexes-skip-if-vectorenabled-false) for the full step-by-step.
+
 ### Repo pipeline config (optional)
 
 Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
@@ -291,22 +308,28 @@ Pushing to `main` triggers GitHub Actions:
 
 ### Adding a new board
 
-Add one entry to `infra/config/boards.ts` and run `cdk deploy`. No other changes required.
+See [`PROVISIONING-NEW-BOARD.md`](PROVISIONING-NEW-BOARD.md) for the full step-by-step runbook. Quick summary of what it covers:
 
-### JIRA board setup (per board)
+1. Create the target GitHub repo and JIRA project
+2. Scaffold the target repo (working build, test runner, `.giga-pipeline.json`)
+3. Add a new entry to `infra/config/boards.ts`
+4. Create `.env.<boardId>` locally and run `./scripts/setup-ssm.sh --board <boardId>` to push secrets to SSM
+5. Create the Pinecone indexes via `./scripts/setup-pinecone.sh --board <boardId>` (skip if `vectorEnabled: false`)
+6. `cd infra && npx cdk deploy`
+7. Point the subdomain CNAME at the new App Runner URL
+8. Copy `jira-done-on-merge.yml` into the target repo and add the JIRA secrets there
+9. File the first ticket and run `process_ticket`
 
-Add these statuses to the project workflow in JIRA admin:
+The runbook also documents what gets provisioned per board (App Runner service, Cognito pool, IAM role, custom domain) versus what's shared (ECR, Pinecone account, Anthropic key, AWS account).
 
-- `In Plan Review` — ticket is awaiting plan approval
-- `In Development` — pipeline is implementing
-- `In Code Review` — PR is open
+### Future: pluggable tracker and VCS
 
-The pipeline creates missing statuses automatically if they don't exist, and logs a hint to wire them into the workflow.
+Two design spikes are captured for making the JIRA and GitHub dependencies pluggable per-board:
 
-### Auto-close JIRA tickets on PR merge
+- [`PLANE-SUPPORT.md`](PLANE-SUPPORT.md) — JIRA → Plane (free OSS tracker), ~3-4 day spike
+- [`BITBUCKET-SUPPORT.md`](BITBUCKET-SUPPORT.md) — GitHub → Bitbucket Cloud / GitLab, ~4-5 day spike
 
-Copy `.github/workflows/jira-done-on-merge.yml` to the target repo and add secrets:
-`JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`.
+Neither is implemented yet — the docs capture the design before context decays.
 
 ## Scripts
 
@@ -315,6 +338,7 @@ Copy `.github/workflows/jira-done-on-merge.yml` to the target repo and add secre
 | `scripts/inspect-local.sh`         | Launch MCP Inspector with local mock server                      |
 | `scripts/inspect-remote.sh`        | Launch MCP Inspector for a remote board (`--board pitchvault`)   |
 | `scripts/setup-ssm.sh`             | Create/update SSM SecureString params from `.env.<boardId>` files |
+| `scripts/setup-pinecone.sh`        | Create Pinecone integrated-inference indexes for a board (idempotent) |
 | `scripts/setup-auth.sh`            | Set up Cognito auth (create pool, client, test user, get tokens) |
 | `scripts/migrate-gigacorp-domain.sh` | Migrate mcp.gigacorp.co from old to new App Runner service     |
 
