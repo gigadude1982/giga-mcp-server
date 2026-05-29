@@ -35,7 +35,7 @@ Pick once, write down — these get referenced in `boards.ts`, SSM key paths, lo
 | MCP server name (Claude Desktop name) | `punch-mcp-server`                   |
 | JIRA project key                      | `PUNCH`                              |
 | GitHub repo                           | `gigadude1982/punch-tamagotchi`      |
-| Public subdomain                      | `punch.gigacorp.co`                  |
+| MCP server subdomain                  | `mcp.punch.gigacorp.co`              |
 | Pinecone index name                   | `punch-tickets`                      |
 
 ### 2. `[user]` Create the GitHub repo
@@ -89,7 +89,7 @@ Append a new entry to the `BOARDS` array:
   jiraUsername: "admin@gigacorp.co",
   githubRepo: "gigadude1982/punch-tamagotchi",
   githubBaseBranch: "main",
-  subdomain: "punch.gigacorp.co",
+  subdomain: "mcp.punch.gigacorp.co",
   vectorEnabled: true,                  // optional; enables Pinecone duplicate detection
   pineconeIndexName: "punch-tickets",   // required if vectorEnabled
 },
