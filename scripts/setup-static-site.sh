@@ -22,6 +22,10 @@ set -euo pipefail
 SITE="${SITE:-punchtamagotchi.com}"
 WWW="www.$SITE"
 REGION="${REGION:-us-east-1}"
+if [[ "$REGION" != "us-east-1" ]]; then
+  echo "ERROR: REGION must be us-east-1 (CloudFront requires ACM certs in us-east-1)."
+  exit 1
+fi
 CONTENT_DIR="${CONTENT_DIR:-$HOME/dev/punch-pwa/dist}"
 TEMPLATE_DIST="${TEMPLATE_DIST:-E3SQXA18GBFLVP}"   # punch.gigacorp.co — proven config to clone
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
