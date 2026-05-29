@@ -102,13 +102,13 @@ class TicketEnricher:
         self,
         jira_client: JiraClient,
         settings: Settings,
-        vector_store: VectorStore | None = None,
+        ticket_store: VectorStore | None = None,
     ) -> None:
         self._jira = jira_client
         self._settings = settings
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._model = settings.anthropic_model
-        self._vector_store = vector_store
+        self._ticket_store = ticket_store
 
     async def create_ticket(self, description: str, auto_enrich: bool = True) -> IdeaResult:
         """Parse a natural language description into a JIRA ticket using AI."""
@@ -151,8 +151,8 @@ class TicketEnricher:
         result = await self._jira.create_ticket(idea)
         logger.info("ticket_created", issue_key=result.jira_key, summary=idea.summary)
 
-        if self._vector_store:
-            await self._vector_store.upsert(
+        if self._ticket_store:
+            await self._ticket_store.upsert(
                 key=result.jira_key,
                 text=f"{idea.summary}\n\n{idea.description}",
                 metadata={
@@ -275,9 +275,9 @@ class TicketEnricher:
         await self._jira.add_comment(issue_key, "\n".join(comment_lines))
         result.comment_added = True
 
-        if self._vector_store:
+        if self._ticket_store:
             desc = analysis.enriched_description or ticket.get("description", "") or ""
-            await self._vector_store.upsert(
+            await self._ticket_store.upsert(
                 key=issue_key,
                 text=f"{ticket['summary']}\n\n{desc}",
                 metadata={
@@ -309,8 +309,8 @@ class TicketEnricher:
         ticket = await self._jira.get_issue(issue_key)
         summary = ticket["summary"]
 
-        if self._vector_store:
-            results = await self._vector_store.search(summary, limit=10)
+        if self._ticket_store:
+            results = await self._ticket_store.search(summary, limit=10)
             return [
                 (r["key"], round(r["_score"], 3))
                 for r in results

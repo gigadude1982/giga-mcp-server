@@ -59,7 +59,7 @@ class AppContext:
     settings: Settings
     pipeline: PipelineOrchestrator
     pipeline_runs: dict[str, PipelineState]
-    vector_store: VectorStore | None = None
+    ticket_store: VectorStore | None = None
     code_history: CodeHistoryStore | None = None
     code_history_ingester: CodeHistoryIngester | None = None
     pipeline_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
@@ -105,13 +105,13 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
     jira_client = JiraClient(settings)
 
-    vector_store = None
+    ticket_store = None
     if settings.vector_enabled:
-        vector_store = VectorStore(
+        ticket_store = VectorStore(
             api_key=settings.pinecone_api_key,
             index_name=settings.pinecone_index_name,
         )
-        await vector_store.setup()
+        await ticket_store.setup()
 
     code_history: CodeHistoryStore | None = None
     code_history_ingester: CodeHistoryIngester | None = None
@@ -144,7 +144,7 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             base_branch=settings.github_base_branch,
         )
 
-    enricher = TicketEnricher(jira_client, settings, vector_store=vector_store)
+    enricher = TicketEnricher(jira_client, settings, ticket_store=ticket_store)
     pipeline = PipelineOrchestrator(settings, jira_client, code_history=code_history)
 
     logger.info(
@@ -160,7 +160,7 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         settings=settings,
         pipeline=pipeline,
         pipeline_runs={},
-        vector_store=vector_store,
+        ticket_store=ticket_store,
         code_history=code_history,
         code_history_ingester=code_history_ingester,
     )
@@ -520,7 +520,7 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
 async def _upsert_ticket(app: AppContext, key: str, ticket: dict) -> None:
     """Upsert one JIRA ticket into the ticket vector store. Idempotent on key."""
     desc = ticket.get("description", "") or ""
-    await app.vector_store.upsert(
+    await app.ticket_store.upsert(
         key=key,
         text=f"{ticket['summary']}\n\n{desc}",
         metadata={
@@ -543,7 +543,7 @@ async def backfill_tickets(ctx: Context = None) -> str:
     backfill_code_history.
     """
     app = _app(ctx)
-    if not app.vector_store:
+    if not app.ticket_store:
         return "Vector store is not enabled. Set GIGA_VECTOR_ENABLED=true and restart."
 
     label = app.settings.jira_processed_label
@@ -574,7 +574,7 @@ async def index_ticket(issue_key: str, ctx: Context = None) -> str:
         issue_key: The JIRA issue key to index (e.g. "PUNCH-1").
     """
     app = _app(ctx)
-    if not app.vector_store:
+    if not app.ticket_store:
         return "Vector store is not enabled. Set GIGA_VECTOR_ENABLED=true and restart."
     ticket = await app.jira_client.get_issue(issue_key)
     if not ticket or not ticket.get("summary"):
