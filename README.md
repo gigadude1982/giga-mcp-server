@@ -51,11 +51,21 @@ process_ticket(PIT-42, approve_plan=True)
        JIRA ticket → "In Code Review"
 ```
 
+> **What this pipeline is today — a feature-addition engine, not a greenfield scaffolder.**
+> It evolves an *existing* codebase one ticket at a time: the Planner anchors on the
+> repo's existing files, conventions, and merged-PR history, and the Validator reviews the
+> generated diff **statically** (the pipeline does not yet build or run the code or tests).
+> Point it at an empty repo and it has nothing to anchor on, so output drifts. **Establish
+> the project's foundation and conventions first** — by hand or from a scaffold — then let
+> the pipeline add and evolve features against that base. Greenfield scaffolding (an
+> "architect" stage that designs the skeleton first) and in-loop build/test validation are
+> on the roadmap.
+
 ## Features
 
 - **AI ticket creation**: Describe a feature or bug in plain English, get a structured JIRA story
 - **AI enrichment**: Analyzes existing tickets and updates priority, labels, description, and acceptance criteria
-- **Autonomous pipeline**: Full Digester → Planner → Implementer → Validator → PR Minter pipeline powered by Claude Sonnet (enrichment uses configurable Haiku by default)
+- **Autonomous pipeline**: Full Digester → Planner → Implementer → Validator → PR Minter pipeline with per-stage model routing (Opus for planning/implementation/validation, Sonnet for digest/tests, Haiku for PR text; enrichment uses configurable Haiku by default)
 - **Implementer-validator feedback loop**: If validation fails, blocking issues are fed back to the implementer which retries — up to `GIGA_PIPELINE_MAX_RETRIES` times
 - **Human-in-the-loop gate**: Pipeline pauses after the Planner, posts the plan to JIRA, and waits for explicit approval before writing any code
 - **JIRA status tracking**: Tickets flow through `In Plan Review` → `In Development` → `In Code Review` → `Done` (on PR merge)
@@ -171,7 +181,7 @@ cp .env.example .env
 | `GIGA_COGNITO_REGION`          | `us-east-1`                 | Cognito region                                          |
 | `GIGA_COGNITO_CLIENT_ID`       | —                           | Restrict to a specific Cognito app client               |
 | `GIGA_PUBLIC_URL`              | —                           | Public URL for OAuth resource metadata                  |
-| `GIGA_ANTHROPIC_MODEL`         | `claude-haiku-4-5-20251001` | Claude model for enrichment; pipeline always uses Sonnet |
+| `GIGA_ANTHROPIC_MODEL`         | `claude-haiku-4-5-20251001` | Claude model for enrichment; the pipeline uses per-stage model routing (see `pipeline_model`) |
 | `GIGA_JIRA_DEFAULT_ISSUE_TYPE` | `Story`                     | Default issue type when creating tickets                |
 | `GIGA_JIRA_DEFAULT_PRIORITY`   | `Medium`                    | Default priority when creating tickets                  |
 | `GIGA_JIRA_INTAKE_STATUS`      | `To Do`                     | Status assigned to newly created tickets                |
@@ -219,7 +229,7 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
 | Field | Default | Description |
 | ----- | ------- | ----------- |
 | `write_tests` | `true` | Whether the pipeline generates a test file alongside implementation |
-| `pipeline_model` | `null` | Override the Claude model used by the pipeline (default: `claude-sonnet-4-6`) |
+| `pipeline_model` | `null` | Force **all** pipeline stages onto one model. When `null` (default), each stage uses its per-stage assignment (Opus for planner/implementer/validator, Sonnet for digester/test_writer, Haiku for PR text) |
 | `code_history_hybrid` | `false` | When `true` and `GIGA_CODEHISTORY_ENABLED` is on, the implementer/validator receive the **actual GitHub diff** for each retrieved past PR — not just the Haiku summary. Costs one extra GitHub API call per hit per pipeline run; trade-off is better grounding in real code. Opt-in. |
 | `code_history_diff_chars_per_hit` | `3000` | Per-hit cap on diff size when `code_history_hybrid` is on. Validator hits get half this budget (`/2`) since it receives 5 hits vs the implementer's 3. Truncation is marked inline so the model knows it's partial. |
 
