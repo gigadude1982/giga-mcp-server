@@ -3,3 +3,4 @@
 # so worktrees would otherwise start without them.
 .env
 .env.*
+!.env.example
