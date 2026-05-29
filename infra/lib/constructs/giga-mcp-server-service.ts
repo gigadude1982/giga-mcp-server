@@ -37,6 +37,10 @@ export interface GigaMcpServerServiceProps {
   vectorEnabled?: boolean;
   /** Pinecone index name (must be created with an embedded model); defaults to 'giga-tickets'. */
   pineconeIndexName?: string;
+  /** Enable code-history long-term memory store (queried by Implementer + Validator). Requires vectorEnabled. */
+  codeHistoryEnabled?: boolean;
+  /** Code-history Pinecone index name; defaults to 'giga-codehistory'. */
+  pineconeCodehistoryIndexName?: string;
   /** App Runner CPU units; defaults to '256' (0.25 vCPU). */
   cpu?: string;
   /** App Runner memory in MB; defaults to '512' (0.5 GB). */
@@ -89,6 +93,8 @@ export class GigaMcpServerService extends Construct {
       enableAuth = false,
       vectorEnabled = false,
       pineconeIndexName = 'giga-tickets',
+      codeHistoryEnabled = false,
+      pineconeCodehistoryIndexName = 'giga-codehistory',
       cpu = '256',
       memory = '512',
     } = props;
@@ -150,6 +156,10 @@ export class GigaMcpServerService extends Construct {
               ...(vectorEnabled ? [
                 { name: 'GIGA_VECTOR_ENABLED', value: 'true' },
                 { name: 'GIGA_PINECONE_INDEX_NAME', value: pineconeIndexName },
+              ] : []),
+              ...(codeHistoryEnabled ? [
+                { name: 'GIGA_CODEHISTORY_ENABLED', value: 'true' },
+                { name: 'GIGA_PINECONE_CODEHISTORY_INDEX_NAME', value: pineconeCodehistoryIndexName },
               ] : []),
             ],
             runtimeEnvironmentSecrets: [

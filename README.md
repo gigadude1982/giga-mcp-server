@@ -179,7 +179,7 @@ cp .env.example .env
 
 ### Vector store settings (Pinecone — optional but recommended)
 
-Pinecone powers semantic duplicate detection on new tickets and long-term agent memory of merged PRs (a.k.a. code-history). Enable per-board via `vectorEnabled: true` in `boards.ts`. The index must use Pinecone's [integrated inference](https://docs.pinecone.io/guides/inference/understanding-inference) (the embedding model lives on Pinecone's side so the server only sends raw text).
+Pinecone powers semantic duplicate detection on new tickets and long-term agent memory of merged PRs (a.k.a. code-history). Enable per-board via `vectorEnabled: true` and `codeHistoryEnabled: true` in `boards.ts` (the CDK construct wires the matching env vars). The indexes must use Pinecone's [integrated inference](https://docs.pinecone.io/guides/inference/understanding-inference) (the embedding model lives on Pinecone's side so the server only sends raw text).
 
 | Variable                              | Default              | Description                                                                |
 | ------------------------------------- | -------------------- | -------------------------------------------------------------------------- |

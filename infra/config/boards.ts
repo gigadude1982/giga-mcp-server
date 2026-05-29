@@ -21,6 +21,15 @@ export interface BoardConfig {
   vectorEnabled?: boolean;
   /** Pinecone index name; defaults to 'giga-tickets'. */
   pineconeIndexName?: string;
+  /**
+   * Enable the code-history long-term memory store (separate Pinecone index of
+   * merged-PR summaries). When true, the Implementer + Validator agents query
+   * this store at pipeline runtime to ground generation in prior PR patterns.
+   * Requires vectorEnabled: true since it reuses the Pinecone API key.
+   */
+  codeHistoryEnabled?: boolean;
+  /** Pinecone code-history index name; defaults to 'giga-codehistory'. */
+  pineconeCodehistoryIndexName?: string;
 }
 
 export const BOARDS: BoardConfig[] = [
@@ -58,5 +67,7 @@ export const BOARDS: BoardConfig[] = [
     subdomain: "mcp.punch.gigacorp.co",
     vectorEnabled: true,
     pineconeIndexName: "punch-tickets",
+    codeHistoryEnabled: true,
+    pineconeCodehistoryIndexName: "punch-codehistory",
   },
 ];
