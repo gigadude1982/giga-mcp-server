@@ -138,6 +138,10 @@ if $LAUNCH; then
     pgrep -x "Claude" >/dev/null 2>&1 || break
     sleep 1
   done
+  if pgrep -x "Claude" >/dev/null 2>&1; then
+    echo "ERROR: Claude Desktop is still running; quit it manually and re-run." >&2
+    exit 1
+  fi
   open -a "Claude"
   echo "✓ Done. Claude Desktop launched with the new token(s)."
 else
