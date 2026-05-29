@@ -32,6 +32,17 @@ class AgentRunner:
         # forces EVERY stage onto this model, ignoring per-stage assignments.
         self.model_override: str | None = None
 
+    def resolve_model(self, agent_name: str) -> str:
+        """Pick the model for an agent.
+
+        Precedence: explicit ``model_override`` (a repo's pipeline_model) >
+        the agent's per-stage ``model`` > the runner default. Note the override
+        must be reset to None between runs by the caller (the orchestrator is a
+        long-lived shared instance) or it leaks across tickets.
+        """
+        config = AGENT_REGISTRY.get(agent_name, {})
+        return self.model_override or config.get("model") or self.model
+
     async def run(self, agent_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
         """Run a named agent, returning validated output.
 
@@ -44,8 +55,7 @@ class AgentRunner:
                              f"Available: {list(AGENT_REGISTRY)}")
 
         config = AGENT_REGISTRY[agent_name]
-        # Precedence: explicit override (repo pipeline_model) > per-stage model > default.
-        model = self.model_override or config.get("model") or self.model
+        model = self.resolve_model(agent_name)
         self._validate_schema(input_data, config["input_schema"], context=f"{agent_name}.input")
 
         user_message = json.dumps(input_data, indent=2)
