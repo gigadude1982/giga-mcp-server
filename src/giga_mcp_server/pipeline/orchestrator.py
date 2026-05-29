@@ -650,6 +650,8 @@ class PipelineOrchestrator:
         """
         if not self._code_history:
             return []
+        if not query_text.strip():
+            return []
         try:
             hits = await self._code_history.search_similar(
                 query_text=query_text,
