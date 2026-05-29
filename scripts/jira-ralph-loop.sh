@@ -78,7 +78,7 @@ else
   case "$BOARD" in
     gigacorp-react)    MCP_URL="https://mcp.gigacorp.co/mcp" ;;
     pitchvault-react)  MCP_URL="https://mcp.pitchvault.co/mcp" ;;
-    punch-tamagotchi)  MCP_URL="https://punch.gigacorp.co/mcp" ;;
+    punch-tamagotchi)  MCP_URL="https://mcp.punch.gigacorp.co/mcp" ;;
     *)
       echo "ERROR: unknown board '$BOARD'. Add it to the case in $(basename "$0") or pass --mcp-url." >&2
       exit 1
