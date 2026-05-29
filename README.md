@@ -332,8 +332,9 @@ Two design spikes are captured for making the JIRA and GitHub dependencies plugg
 
 - [`PLANE-SUPPORT.md`](PLANE-SUPPORT.md) — JIRA → Plane (free OSS tracker), ~3-4 day spike
 - [`BITBUCKET-SUPPORT.md`](BITBUCKET-SUPPORT.md) — GitHub → Bitbucket Cloud / GitLab, ~4-5 day spike
+- [`MULTI-CLIENT-INTEGRATION.md`](MULTI-CLIENT-INTEGRATION.md) — exposing the deployed MCP server to ChatGPT, Cursor, Teams, Slack, Discord, etc. (native MCP clients work today; bridge bots are ~1-2 day spikes each)
 
-Neither is implemented yet — the docs capture the design before context decays.
+None of these are implemented yet — the docs capture the design before context decays.
 
 ## Scripts
 
