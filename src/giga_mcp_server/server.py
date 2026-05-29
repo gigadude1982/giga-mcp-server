@@ -194,6 +194,7 @@ async def get_server_info(ctx: Context = None) -> str:
         "",
         "**JIRA**",
         f"- {s.jira_url} · project `{s.jira_project_key}` · as {s.jira_username}",
+        "",
         "**GitHub**",
         f"- {s.github_repo or '(not set)'} @ `{s.github_base_branch}`",
         "",
