@@ -99,6 +99,10 @@ export class GigaMcpServerService extends Construct {
       memory = '512',
     } = props;
 
+    if (codeHistoryEnabled && !vectorEnabled) {
+      throw new Error('codeHistoryEnabled requires vectorEnabled because it reuses the Pinecone API key.');
+    }
+
     const prefix = `giga-mcp-${boardId}`;
     const stack = cdk.Stack.of(this);
     const ssmParamArn = (name: string) =>
