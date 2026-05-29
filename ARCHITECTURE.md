@@ -63,7 +63,7 @@ Pinecone indexes.
 
 > **Why this shape:** the brief is "evolve one app per team with minimal human
 > involvement." A board = a team's app. Per-board isolation (separate pool/secrets/index)
-> means one tenant can't see or break another, and onboarding is a config line + `cdk deploy`.
+> means one tenant can't see or break another, and onboarding is a `BoardConfig` entry plus SSM/DNS setup + `cdk deploy`.
 
 ---
 
