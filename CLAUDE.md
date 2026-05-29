@@ -35,7 +35,7 @@ There are two distinct subsystems sharing the JIRA client:
 
 **1. Enrichment** (`src/giga_mcp_server/enrichment.py`) — single-shot Claude calls that analyze a ticket and update fields/labels/subtasks. Uses the cheaper `GIGA_ANTHROPIC_MODEL` (Haiku by default).
 
-**2. Autonomous implementation pipeline** (`src/giga_mcp_server/pipeline/`) — multi-stage agent pipeline that writes code and opens PRs. Always uses Sonnet (overridable via `.giga-pipeline.json`'s `pipeline_model`). The stages are defined as prompts + I/O JSON schemas in `pipeline/agent_prompts.py:AGENT_REGISTRY`:
+**2. Autonomous implementation pipeline** (`src/giga_mcp_server/pipeline/`) — multi-stage agent pipeline that writes code and opens PRs. Uses **per-stage model routing**: each agent in `AGENT_REGISTRY` carries a `model` (Opus for planner/implementer/validator, Sonnet for digester/test_writer, Haiku for PR text). `AgentRunner` resolves `model_override` > per-stage `model` > default, so a repo's `.giga-pipeline.json` `pipeline_model` still forces *all* stages onto one model. The stages are defined as prompts + I/O JSON schemas in `pipeline/agent_prompts.py:AGENT_REGISTRY`:
 
 ```
 Digester → Planner → [Implementers ∥ Test Writers] → Validator ↺ → PR Minter
