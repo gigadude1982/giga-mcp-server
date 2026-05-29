@@ -119,6 +119,15 @@ tickets.)*
 **Atomic commits.** Files land via the **GitHub Git Data API** as a single commit — no
 intermediate states, no partial pushes.
 
+**Execution feedback via CI.** The Validator's review is *static* (it reasons over the diff,
+not a running program), but the pipeline doesn't stop there: after the PR is opened it **polls
+the PR's GitHub Actions CI** (`poll_pr_until_complete`), and on failure it **fetches the
+failure logs, feeds them back to the Implementer/Test-Writer, re-validates, commits a fix to
+the same branch, and re-polls** — a bounded build/test feedback loop with **CI as the execution
+environment**. If it's still red after the fix cycle, it comments "manual review required" on
+the ticket. The important caveat: **this only engages if the target repo has CI** that builds
+and tests PRs; with no CI there are no checks to fail, so the loop stays dormant.
+
 **Two-call `process_ticket` flow** (gated by `GIGA_PIPELINE_HUMAN_GATE`):
 1. `process_ticket(issue_key)` → Digester + Planner, posts plan to JIRA, status
    `awaiting_approval`.
@@ -185,10 +194,12 @@ These are the "why X and not Y" questions worth being able to answer cold.
   So the pattern is **establish a foundation by hand, then let the pipeline evolve it** — which
   also matches the target use case (an existing app). Greenfield (an "architect" stage that
   designs the skeleton first) is roadmap.
-- **Static validation vs. real build/test execution.** Today the Validator reviews the *diff*;
-  the pipeline never builds or runs the code. This keeps it simple and provider-agnostic but
-  can't catch runtime/build failures — hence the human gate and the foundation-first approach.
-  In-loop build/test execution is the highest-value roadmap item.
+- **CI as the execution sandbox vs. a local pre-PR build.** The Validator is static, but the
+  pipeline gets real build/test signal by polling the PR's CI and feeding failures back into a
+  bounded fix-and-recommit loop — execution without the server needing to run a working tree.
+  Trade-off: it's *post-PR* (a failing PR is opened, then fixed) and **depends on the target
+  repo having CI**. A local/pre-PR build sandbox could catch failures before the PR is opened,
+  at the cost of running untrusted generated code on the server — deliberately avoided for now.
 - **Bearer token vs. full OAuth connector.** Desktop bearer is simple and works today; the
   claude.ai/mobile native connector needs the OAuth authorization-code flow (Cognito hosted UI),
   and Cognito lacks Dynamic Client Registration — a real integration cost, deliberately deferred.
@@ -205,8 +216,10 @@ These are the "why X and not Y" questions worth being able to answer cold.
 
 Naming these (and the plan) is the point — it's what a senior candidate does.
 
-- **No in-loop build/test validation** — the Validator is static. *Plan:* add install/build/
-  test/lint execution feeding the retry loop (needs an execution/test harness).
+- **Execution validation depends on target-repo CI** — the pipeline already polls CI and
+  fixes on failure, but it only engages if the repo *has* CI building/testing PRs (punch-pwa
+  currently has none). *Plan:* ship a CI workflow with each board's repo; optionally add a
+  pre-PR local build sandbox so failures are caught before the PR is opened.
 - **Feature-addition only, not greenfield** — *Plan:* an "architect" stage that designs the
   skeleton + conventions from requirements, then fans tickets against it.
 - **Mobile / claude.ai connector** — needs Cognito hosted-UI OAuth + a DCR workaround (see
