@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import importlib.metadata
+import json
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -10,6 +13,8 @@ from typing import AsyncIterator
 
 import structlog
 from mcp.server.fastmcp import Context, FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from giga_mcp_server.config import Settings
 from giga_mcp_server.enrichment import TicketEnricher
@@ -60,6 +65,12 @@ class AppContext:
     pipeline_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
+# Captured at lifespan start so non-MCP Starlette routes (the GitHub webhook)
+# can reach the app context — custom routes don't get the MCP request context.
+_runtime: AppContext | None = None
+_webhook_tasks: set[asyncio.Task] = set()
+
+
 @asynccontextmanager
 async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Lifespan for MCP Inspector: mock clients for dry-run testing."""
@@ -71,14 +82,20 @@ async def _inspect_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     pipeline = PipelineOrchestrator(settings, jira_client)
 
     logger.info("server_started", version=_VERSION, transport=settings.transport, mode="inspect")
-    yield AppContext(
+    app_ctx = AppContext(
         jira_client=jira_client,
         enricher=enricher,
         settings=settings,
         pipeline=pipeline,
         pipeline_runs={},
     )
-    logger.info("server_stopped")
+    global _runtime
+    _runtime = app_ctx
+    try:
+        yield app_ctx
+    finally:
+        _runtime = None
+        logger.info("server_stopped")
 
 
 @asynccontextmanager
@@ -137,7 +154,7 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         vector=settings.vector_enabled,
         code_history=settings.codehistory_enabled,
     )
-    yield AppContext(
+    app_ctx = AppContext(
         jira_client=jira_client,
         enricher=enricher,
         settings=settings,
@@ -147,7 +164,13 @@ async def _production_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         code_history=code_history,
         code_history_ingester=code_history_ingester,
     )
-    logger.info("server_stopped")
+    global _runtime
+    _runtime = app_ctx
+    try:
+        yield app_ctx
+    finally:
+        _runtime = None
+        logger.info("server_stopped")
 
 
 @asynccontextmanager
@@ -494,12 +517,30 @@ async def find_duplicates(issue_key: str, ctx: Context = None) -> str:
     return "\n".join(lines)
 
 
+async def _upsert_ticket(app: AppContext, key: str, ticket: dict) -> None:
+    """Upsert one JIRA ticket into the ticket vector store. Idempotent on key."""
+    desc = ticket.get("description", "") or ""
+    await app.vector_store.upsert(
+        key=key,
+        text=f"{ticket['summary']}\n\n{desc}",
+        metadata={
+            "key": key,
+            "summary": ticket["summary"],
+            "description": desc[:500],
+            "issue_type": ticket.get("issue_type", ""),
+            "priority": ticket.get("priority", ""),
+            "labels": ticket.get("labels", []),
+        },
+    )
+
+
 @mcp.tool()
-async def backfill_vectors(ctx: Context = None) -> str:
-    """Seed the vector store with all processed backlog tickets.
+async def backfill_tickets(ctx: Context = None) -> str:
+    """Seed the ticket vector store with all processed backlog tickets.
 
     Run this once after enabling GIGA_VECTOR_ENABLED to populate historical data.
-    Safe to re-run — upserts are idempotent.
+    Safe to re-run — upserts are idempotent. The ticket-side counterpart of
+    backfill_code_history.
     """
     app = _app(ctx)
     if not app.vector_store:
@@ -515,26 +556,31 @@ async def backfill_vectors(ctx: Context = None) -> str:
     if not tickets:
         return "No processed tickets found to backfill."
 
-    async def _upsert(t: dict) -> None:
-        desc = t.get("description", "") or ""
-        await app.vector_store.upsert(
-            key=t["key"],
-            text=f"{t['summary']}\n\n{desc}",
-            metadata={
-                "key": t["key"],
-                "summary": t["summary"],
-                "description": desc[:500],
-                "issue_type": t.get("issue_type", ""),
-                "priority": t.get("priority", ""),
-                "labels": t.get("labels", []),
-            },
-        )
-
     batch_size = 20
     for i in range(0, len(tickets), batch_size):
-        await asyncio.gather(*(_upsert(t) for t in tickets[i : i + batch_size]))
+        await asyncio.gather(*(_upsert_ticket(app, t["key"], t) for t in tickets[i : i + batch_size]))
 
     return f"Backfill complete — {len(tickets)} ticket(s) upserted into '{app.settings.pinecone_index_name}'."
+
+
+@mcp.tool()
+async def index_ticket(issue_key: str, ctx: Context = None) -> str:
+    """Index a single JIRA ticket into the ticket vector store.
+
+    Idempotent — re-indexing replaces the existing record. The ticket-side
+    counterpart of index_pr.
+
+    Args:
+        issue_key: The JIRA issue key to index (e.g. "PUNCH-1").
+    """
+    app = _app(ctx)
+    if not app.vector_store:
+        return "Vector store is not enabled. Set GIGA_VECTOR_ENABLED=true and restart."
+    ticket = await app.jira_client.get_issue(issue_key)
+    if not ticket or not ticket.get("summary"):
+        return f"Ticket {issue_key} not found."
+    await _upsert_ticket(app, issue_key, ticket)
+    return f"Ticket {issue_key} indexed into '{app.settings.pinecone_index_name}'."
 
 
 @mcp.tool()
@@ -596,6 +642,82 @@ async def index_pr(pr_number: int, ctx: Context = None) -> str:
             f"'{app.settings.pinecone_codehistory_index_name}'."
         )
     return f"PR #{pr_number} skipped — not merged or summarisation failed (check logs)."
+
+
+# ---------------------------------------------------------------------------
+# GitHub webhook → auto-ingest merged PRs into code-history (no manual backfill)
+# ---------------------------------------------------------------------------
+
+
+def _verify_github_signature(secret: str, body: bytes, signature_header: str) -> bool:
+    """Constant-time check of GitHub's X-Hub-Signature-256 HMAC header."""
+    if not secret or not signature_header:
+        return False
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
+def _merged_pr_number(event: str, payload: dict, base_branch: str, repo: str) -> int | None:
+    """PR number if the payload is a merge into base_branch for our repo, else None."""
+    if event != "pull_request" or payload.get("action") != "closed":
+        return None
+    pr = payload.get("pull_request") or {}
+    if not pr.get("merged"):
+        return None
+    if base_branch and (pr.get("base") or {}).get("ref") != base_branch:
+        return None
+    full_name = (payload.get("repository") or {}).get("full_name") or ""
+    # When a repo is configured, require an exact match — a missing/empty
+    # full_name must NOT pass the filter.
+    if repo and full_name != repo:
+        return None
+    number = pr.get("number")
+    return number if isinstance(number, int) else None
+
+
+async def _index_pr_safe(ingester: CodeHistoryIngester, pr_number: int) -> None:
+    try:
+        ok = await ingester.index_pr(pr_number)
+        logger.info("webhook_pr_indexed", pr=pr_number, indexed=ok)
+    except Exception:
+        logger.exception("webhook_pr_index_failed", pr=pr_number)
+
+
+@mcp.custom_route("/webhooks/github", methods=["POST"])
+async def github_webhook(request: Request) -> Response:
+    """Auto-ingest merged PRs into the code-history store. Authenticated by the
+    GitHub webhook HMAC (not Cognito — GitHub can't present a bearer token)."""
+    runtime = _runtime
+    settings = runtime.settings if runtime else _settings
+    secret = settings.github_webhook_secret
+    if not secret:
+        return JSONResponse({"error": "webhook not configured"}, status_code=503)
+
+    body = await request.body()
+    if not _verify_github_signature(secret, body, request.headers.get("X-Hub-Signature-256", "")):
+        return JSONResponse({"error": "invalid signature"}, status_code=401)
+
+    event = request.headers.get("X-GitHub-Event", "")
+    if event == "ping":
+        return JSONResponse({"ok": True})
+
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    pr_number = _merged_pr_number(event, payload, settings.github_base_branch, settings.github_repo)
+    if pr_number is None:
+        return JSONResponse({"ignored": True}, status_code=202)
+
+    ingester = runtime.code_history_ingester if runtime else None
+    if ingester is None:
+        return JSONResponse({"ignored": "code-history disabled"}, status_code=202)
+
+    task = asyncio.create_task(_index_pr_safe(ingester, pr_number))
+    _webhook_tasks.add(task)
+    task.add_done_callback(_webhook_tasks.discard)
+    return JSONResponse({"accepted": pr_number}, status_code=202)
 
 
 _PIPELINE_TERMINAL_STATUSES = {"In Review", "Done", "Closed", "Resolved"}

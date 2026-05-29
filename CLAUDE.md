@@ -69,7 +69,7 @@ Pipeline state lives in `AppContext.pipeline_runs: dict[str, PipelineState]` (`s
 - **The agent prompts in `pipeline/agent_prompts.py` are React-web-specific.** Implementer/test_writer/validator rules cover PropTypes, CSS modules, JSX/Prettier formatting, the React 17+ automatic JSX transform, etc. Pointing the pipeline at a non-React stack will produce noise or actively wrong code until the prompts are refactored into language/framework-aware rule packs (the `language` field in `repo_config.py` is the natural seam).
 - **Bumping `pyproject.toml` version requires `pip install -e .`** before the new version shows in `get_server_info`.
 - **Don't let the pipeline plan changes to CI/CD workflows or deploy config** — the planner prompt explicitly forbids this; preserve that rule when editing prompts.
-- **Pinecone vector store is opt-in per board** via `vectorEnabled` in `boards.ts`. When disabled, `VectorStore` is `None` and enrichment falls back to the fuzzy-match duplicate detector. After enabling on a board, run the `backfill_vectors` MCP tool once to seed history.
+- **Pinecone vector store is opt-in per board** via `vectorEnabled` in `boards.ts`. When disabled, `VectorStore` is `None` and enrichment falls back to the fuzzy-match duplicate detector. After enabling on a board, run the `backfill_tickets` MCP tool once to seed history (or `index_ticket` for a single ticket).
 - **Missing JIRA workflow statuses** (`In Plan Review`, `In Development`, `In Code Review`) are auto-created by the pipeline but not auto-wired into the workflow — JIRA admin still has to add the transitions, and the pipeline logs a hint when this is needed.
 
 ## Deployment
