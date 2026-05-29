@@ -291,22 +291,27 @@ Pushing to `main` triggers GitHub Actions:
 
 ### Adding a new board
 
-Add one entry to `infra/config/boards.ts` and run `cdk deploy`. No other changes required.
+See [`PROVISIONING-NEW-BOARD.md`](PROVISIONING-NEW-BOARD.md) for the full step-by-step runbook. Quick summary of what it covers:
 
-### JIRA board setup (per board)
+1. Create the target GitHub repo and JIRA project
+2. Scaffold the target repo (working build, test runner, `.giga-pipeline.json`)
+3. Add a new entry to `infra/config/boards.ts`
+4. Create `.env.<boardId>` locally and run `./scripts/setup-ssm.sh --board <boardId>` to push secrets to SSM
+5. `cd infra && npx cdk deploy`
+6. Point the subdomain CNAME at the new App Runner URL
+7. Copy `jira-done-on-merge.yml` into the target repo and add the JIRA secrets there
+8. File the first ticket and run `process_ticket`
 
-Add these statuses to the project workflow in JIRA admin:
+The runbook also documents what gets provisioned per board (App Runner service, Cognito pool, IAM role, custom domain) versus what's shared (ECR, Pinecone account, Anthropic key, AWS account).
 
-- `In Plan Review` — ticket is awaiting plan approval
-- `In Development` — pipeline is implementing
-- `In Code Review` — PR is open
+### Future: pluggable tracker and VCS
 
-The pipeline creates missing statuses automatically if they don't exist, and logs a hint to wire them into the workflow.
+Two design spikes are captured for making the JIRA and GitHub dependencies pluggable per-board:
 
-### Auto-close JIRA tickets on PR merge
+- [`PLANE-SUPPORT.md`](PLANE-SUPPORT.md) — JIRA → Plane (free OSS tracker), ~3-4 day spike
+- [`BITBUCKET-SUPPORT.md`](BITBUCKET-SUPPORT.md) — GitHub → Bitbucket Cloud / GitLab, ~4-5 day spike
 
-Copy `.github/workflows/jira-done-on-merge.yml` to the target repo and add secrets:
-`JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`.
+Neither is implemented yet — the docs capture the design before context decays.
 
 ## Scripts
 
