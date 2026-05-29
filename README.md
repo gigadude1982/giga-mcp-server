@@ -53,8 +53,9 @@ process_ticket(PIT-42, approve_plan=True)
 
 > **What this pipeline is today — a feature-addition engine, not a greenfield scaffolder.**
 > It evolves an *existing* codebase one ticket at a time: the Planner anchors on the
-> repo's existing files, conventions, and merged-PR history, and the Validator reviews the
-> generated diff **statically** (the pipeline does not yet build or run the code or tests).
+> repo's existing files and conventions, the Implementer and Validator are additionally
+> grounded in merged-PR history (code-history), and the Validator reviews the generated
+> diff **statically** (the pipeline does not yet build or run the code or tests).
 > Point it at an empty repo and it has nothing to anchor on, so output drifts. **Establish
 > the project's foundation and conventions first** — by hand or from a scaffold — then let
 > the pipeline add and evolve features against that base. Greenfield scaffolding (an
