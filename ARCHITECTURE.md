@@ -18,7 +18,8 @@ project + GitHub repo:
    → mint PR.
 
 One codebase, one Docker image, **one App Runner service per JIRA-board ↔ GitHub-repo
-pair**, all provisioned by a single CDK stack. Adding a board is a one-line config change.
+pair**, all provisioned by a single CDK stack. Adding a board starts with a `BoardConfig`
+entry, plus the board-specific SSM secrets and DNS setup.
 
 ---
 
