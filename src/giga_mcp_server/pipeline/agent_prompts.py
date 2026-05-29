@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
+# ----------------------------------------------------------------------------
+# Per-stage model routing (tiered). Opus for the high-value reasoning/codegen
+# stages (planning, implementing, reviewing); Sonnet for structured extraction
+# and test writing; Haiku for the trivial PR text. A repo's .giga-pipeline.json
+# `pipeline_model` overrides ALL of these (see AgentRunner.model_override).
+# ----------------------------------------------------------------------------
+MODEL_OPUS = "claude-opus-4-8"
+MODEL_SONNET = "claude-sonnet-4-6"
+MODEL_HAIKU = "claude-haiku-4-5-20251001"
+
 AGENT_REGISTRY: dict[str, dict[str, Any]] = {
     # ------------------------------------------------------------------
     # Stage 1: Ticket Digester
     # Normalises a raw JIRA ticket into a structured implementation spec.
     # ------------------------------------------------------------------
     "digester": {
+        "model": MODEL_SONNET,
         "system_prompt": """\
 You are a software requirements analyst. Given a raw JIRA ticket, extract and \
 structure the information needed for autonomous implementation.
@@ -98,6 +109,7 @@ but match the project's established style and specificity.
     # Emits a concrete implementation plan: files to change, approach, test strategy.
     # ------------------------------------------------------------------
     "planner": {
+        "model": MODEL_OPUS,
         "system_prompt": """\
 You are a senior software architect. Given a structured ticket spec and a snapshot \
 of the relevant codebase, produce a detailed implementation plan.
@@ -182,6 +194,7 @@ Rules:
     # Writes the actual code for a single file.
     # ------------------------------------------------------------------
     "implementer": {
+        "model": MODEL_OPUS,
         "system_prompt": """\
 You are an expert software engineer. Given an implementation plan and the current \
 content of a file (if it exists), write the complete updated file content.
@@ -305,6 +318,7 @@ unnecessary. Adding it will trigger the no-unused-vars ESLint rule and fail the 
     # Writes tests for a single test file, in parallel with implementers.
     # ------------------------------------------------------------------
     "test_writer": {
+        "model": MODEL_SONNET,
         "system_prompt": """\
 You are a senior QA engineer. Given a test plan and the implementation files, \
 write comprehensive tests for a single test file.
@@ -389,6 +403,7 @@ Address every single one explicitly.
     # Checks coherence between implementation and tests before PR.
     # ------------------------------------------------------------------
     "validator": {
+        "model": MODEL_OPUS,
         "system_prompt": """\
 You are a senior code reviewer acting as the last gate before a PR is opened. \
 The code you receive was written by an AI and will be committed directly — no \
@@ -516,6 +531,7 @@ correctness is absolute regardless of historical patterns.
     # Writes the PR title, body, and JIRA comment.
     # ------------------------------------------------------------------
     "pr_minter": {
+        "model": MODEL_HAIKU,
         "system_prompt": """\
 You are a technical writer producing a pull request description and JIRA update \
 for an autonomously implemented change.
@@ -568,6 +584,7 @@ commit_message must follow Conventional Commits: type(scope): description
     # high volume, low cost, factual extraction only.
     # ------------------------------------------------------------------
     "pr_summarizer": {
+        "model": MODEL_HAIKU,
         "system_prompt": """\
 You summarize merged pull requests for a long-term code-history memory used to \
 ground future code generation. Your summary will be embedded and retrieved when \

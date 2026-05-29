@@ -103,7 +103,7 @@ class PipelineOrchestrator:
                 default_max_retries=self._settings.pipeline_max_retries,
             )
             if config.pipeline_model:
-                self._runner.model = config.pipeline_model
+                self._runner.model_override = config.pipeline_model
             await self._run_pipeline(ticket_key, state, config, skip_human_gate=skip_human_gate)
         except _HaltError as e:
             state.status = "halted"
@@ -218,7 +218,7 @@ class PipelineOrchestrator:
                     f"{config.coding_standards}\n\nFormatter configs from repo:\n{formatter_configs}"
                 )
             if config.pipeline_model:
-                self._runner.model = config.pipeline_model
+                self._runner.model_override = config.pipeline_model
             await self._run_from_plan(ticket_key, state, config, state.spec, state.plan)
         except _HaltError as e:
             state.status = "halted"
