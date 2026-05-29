@@ -177,6 +177,21 @@ cp .env.example .env
 | `GIGA_JIRA_INTAKE_STATUS`      | `To Do`                     | Status assigned to newly created tickets                |
 | `GIGA_JIRA_PROCESSED_LABEL`    | `ai-processed`              | Label added to enriched tickets                         |
 
+### Vector store settings (Pinecone — optional but recommended)
+
+Pinecone powers semantic duplicate detection on new tickets and long-term agent memory of merged PRs (a.k.a. code-history). Enable per-board via `vectorEnabled: true` in `boards.ts`. The index must use Pinecone's [integrated inference](https://docs.pinecone.io/guides/inference/understanding-inference) (the embedding model lives on Pinecone's side so the server only sends raw text).
+
+| Variable                              | Default              | Description                                                                |
+| ------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| `GIGA_VECTOR_ENABLED`                 | `false`              | Master switch for the ticket vector store. Set `true` to use Pinecone     |
+| `GIGA_PINECONE_API_KEY`               | —                    | Required when `GIGA_VECTOR_ENABLED=true`                                   |
+| `GIGA_PINECONE_INDEX_NAME`            | `giga-tickets`       | Per-board index name. Must be an integrated-inference index that exists in Pinecone before the server starts |
+| `GIGA_CODEHISTORY_ENABLED`            | `false`              | Master switch for long-term agent memory of merged PRs                     |
+| `GIGA_PINECONE_CODEHISTORY_INDEX_NAME`| `giga-codehistory`   | Index name for the code-history store                                      |
+| `GIGA_CODEHISTORY_SUMMARIZER_MODEL`   | `claude-haiku-4-5-20251001` | Claude model used to summarize merged PRs before embedding                |
+
+When `vectorEnabled` is `false` on a board, the server falls back to the fuzzy-match duplicate detector and the code-history store is skipped. After enabling vector on a board for the first time, run the `backfill_vectors` MCP tool once to seed the index from existing JIRA tickets.
+
 ### Repo pipeline config (optional)
 
 Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
