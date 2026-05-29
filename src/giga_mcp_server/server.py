@@ -177,20 +177,50 @@ def _app(ctx: Context) -> AppContext:
 
 @mcp.tool()
 async def get_server_info(ctx: Context = None) -> str:
-    """Return server name, version, and runtime configuration."""
+    """Return server name, version, and runtime configuration: the models each
+    stage uses (enrichment, code-history, and per-stage pipeline models), auth,
+    vector stores, and pipeline settings."""
+    from giga_mcp_server.pipeline.agent_prompts import AGENT_REGISTRY
+    from giga_mcp_server.pipeline.agent_runner import _PIPELINE_MODEL
+
     app = _app(ctx)
     s = app.settings
+
+    def on(flag: bool) -> str:
+        return "enabled" if flag else "disabled"
+
     lines = [
-        f"**Name:** {s.server_name}",
-        f"**Version:** {_VERSION}",
-        f"**Transport:** {s.transport}",
-        f"**JIRA URL:** {s.jira_url}",
-        f"**JIRA User:** {s.jira_username}",
-        f"**JIRA Project:** {s.jira_project_key}",
-        f"**GitHub Repo:** {s.github_repo or '(not set)'}",
-        f"**GitHub Base Branch:** {s.github_base_branch}",
-        f"**AI Model:** {s.anthropic_model}",
-        f"**Auth:** {'enabled' if s.auth_enabled else 'disabled'}",
+        f"**{s.server_name}** v{_VERSION} · transport `{s.transport}`",
+        "",
+        "**JIRA**",
+        f"- {s.jira_url} · project `{s.jira_project_key}` · as {s.jira_username}",
+        "**GitHub**",
+        f"- {s.github_repo or '(not set)'} @ `{s.github_base_branch}`",
+        "",
+        "**Models**",
+        f"- Enrichment / ticket creation: `{s.anthropic_model}`",
+        f"- Code-history summarizer: `{s.codehistory_summarizer_model}`",
+        "- Pipeline (per stage):",
+    ]
+    lines += [f"    - {agent}: `{cfg.get('model') or _PIPELINE_MODEL}`"
+              for agent, cfg in AGENT_REGISTRY.items()]
+    lines.append(
+        f"  - _default `{_PIPELINE_MODEL}`; a target repo's `.giga-pipeline.json` "
+        "`pipeline_model` overrides every stage_"
+    )
+    lines += [
+        "",
+        "**Features**",
+        f"- Auth (Cognito): {on(s.auth_enabled)}"
+        + (f" · pool `{s.cognito_user_pool_id}`" if s.auth_enabled else ""),
+        f"- Vector store: {on(s.vector_enabled)}"
+        + (f" · index `{s.pinecone_index_name}`" if s.vector_enabled else ""),
+        f"- Code-history store: {on(s.codehistory_enabled)}"
+        + (f" · index `{s.pinecone_codehistory_index_name}`" if s.codehistory_enabled else ""),
+        "",
+        "**Pipeline**",
+        f"- Human approval gate: {on(s.pipeline_human_gate)}",
+        f"- Max validator retries: {s.pipeline_max_retries}",
     ]
     return "\n".join(lines)
 
