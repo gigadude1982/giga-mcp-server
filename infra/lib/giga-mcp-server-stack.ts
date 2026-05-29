@@ -4,7 +4,6 @@ import { Construct } from 'constructs';
 import { BOARDS } from '../config/boards';
 import {
   ACCESS_ROLE_ARN,
-  COGNITO_USER_POOL_ID,
   ECR_REPO_NAME,
   INSTANCE_ROLE_ARN,
 } from '../config/environments';
@@ -44,8 +43,10 @@ export class GigaMcpServerStack extends cdk.Stack {
           ecrRepo,
           accessRoleArn: ACCESS_ROLE_ARN,
           instanceRoleArn: INSTANCE_ROLE_ARN,
-          existingCognitoUserPoolId:
-            board.boardId === 'gigacorp-react' ? COGNITO_USER_POOL_ID : undefined,
+          // gigacorp previously imported a now-deleted pool; let every board
+          // create + own its pool. cognitoPoolSuffix forces replacement of a
+          // pool whose physical resource was deleted (pitchvault drift).
+          userPoolNameSuffix: board.cognitoPoolSuffix,
           enableAuth: board.enableAuth,
         },
       );

@@ -30,6 +30,12 @@ export interface BoardConfig {
   codeHistoryEnabled?: boolean;
   /** Pinecone code-history index name; defaults to 'giga-codehistory'. */
   pineconeCodehistoryIndexName?: string;
+  /**
+   * Optional suffix on the Cognito pool name. Bump it to force CloudFormation
+   * to REPLACE the pool — needed when the physical pool was deleted out-of-band
+   * (drift) and CDK otherwise no-ops. Leave unset for healthy boards.
+   */
+  cognitoPoolSuffix?: string;
 }
 
 export const BOARDS: BoardConfig[] = [
@@ -57,6 +63,7 @@ export const BOARDS: BoardConfig[] = [
     subdomain: "mcp.pitchvault.co",
     enableAuth: true,
     pineconeIndexName: "pitchvault-tickets",
+    cognitoPoolSuffix: "-v2",  // force replace: original pool was deleted out-of-band
   },
   {
     boardId: "punch-pwa",
