@@ -52,6 +52,17 @@ class TestMergedPrNumber:
     def test_ignores_a_different_repo(self):
         assert _merged_pr_number("pull_request", _payload(repo="x/y"), "main", "o/r") is None
 
+    def test_rejects_missing_repo_full_name_when_repo_configured(self):
+        # hardening: a payload without repository.full_name must NOT pass the filter
+        payload = _payload()
+        payload["repository"] = {}
+        assert _merged_pr_number("pull_request", payload, "main", "o/r") is None
+
+    def test_no_repo_check_when_repo_unconfigured(self):
+        payload = _payload()
+        payload["repository"] = {}
+        assert _merged_pr_number("pull_request", payload, "main", "") == 7
+
     def test_round_trips_through_json_like_a_real_delivery(self):
         raw = json.dumps(_payload(number=42)).encode()
         assert _merged_pr_number("pull_request", json.loads(raw), "main", "o/r") == 42

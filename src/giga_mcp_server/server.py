@@ -667,7 +667,9 @@ def _merged_pr_number(event: str, payload: dict, base_branch: str, repo: str) ->
     if base_branch and (pr.get("base") or {}).get("ref") != base_branch:
         return None
     full_name = (payload.get("repository") or {}).get("full_name") or ""
-    if repo and full_name and full_name != repo:
+    # When a repo is configured, require an exact match — a missing/empty
+    # full_name must NOT pass the filter.
+    if repo and full_name != repo:
         return None
     number = pr.get("number")
     return number if isinstance(number, int) else None
