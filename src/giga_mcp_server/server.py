@@ -720,6 +720,56 @@ async def github_webhook(request: Request) -> Response:
     return JSONResponse({"accepted": pr_number}, status_code=202)
 
 
+# ---------------------------------------------------------------------------
+# OAuth authorization-server metadata — for the claude.ai / mobile connector
+# ---------------------------------------------------------------------------
+
+
+def _oauth_metadata(settings: Settings) -> dict:
+    """RFC 8414 metadata pointing at the Cognito hosted UI. Deliberately omits
+    registration_endpoint — Cognito has no Dynamic Client Registration; claude.ai
+    uses a manually-entered client_id instead."""
+    hosted = settings.cognito_hosted_ui_domain.rstrip("/")
+    return {
+        "issuer": settings.public_url,
+        "authorization_endpoint": f"{hosted}/oauth2/authorize",
+        "token_endpoint": f"{hosted}/oauth2/token",
+        "jwks_uri": (
+            f"https://cognito-idp.{settings.cognito_region}.amazonaws.com"
+            f"/{settings.cognito_user_pool_id}/.well-known/jwks.json"
+        ),
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": settings.cognito_oauth_scopes.split(),
+        "subject_types_supported": ["public"],
+    }
+
+
+_OAUTH_METADATA_CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+}
+
+
+@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
+@mcp.custom_route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
+async def oauth_authorization_server_metadata(request: Request) -> Response:
+    """Authorization-server metadata for the claude.ai web + iPhone OAuth connector.
+    Overrides what Cognito advertises (S256 PKCE, hosted-UI endpoints, no DCR) and is
+    served at both well-known paths claude.ai may probe. Public by design — discovery
+    must succeed before the client holds a token. See MOBILE-CONNECTOR-OAUTH.md."""
+    runtime = _runtime
+    settings = runtime.settings if runtime else _settings
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=_OAUTH_METADATA_CORS)
+    if not settings.oauth_connector_enabled:
+        return JSONResponse({"error": "oauth connector not enabled"}, status_code=404)
+    return JSONResponse(_oauth_metadata(settings), headers=_OAUTH_METADATA_CORS)
+
+
 _PIPELINE_TERMINAL_STATUSES = {"In Review", "Done", "Closed", "Resolved"}
 
 
@@ -832,10 +882,17 @@ def _configure_auth(settings: Settings) -> None:
         client_id=settings.cognito_client_id or None,
     )
 
-    issuer_url = (
-        f"https://cognito-idp.{settings.cognito_region}.amazonaws.com"
-        f"/{settings.cognito_user_pool_id}"
-    )
+    # For the mobile/claude.ai OAuth connector, advertise THIS server as the
+    # authorization server (it serves a metadata override at
+    # /.well-known/oauth-authorization-server). Otherwise advertise Cognito directly.
+    # Token verification is independent of this (the verifier checks the Cognito iss).
+    if settings.oauth_connector_enabled and settings.public_url:
+        issuer_url = settings.public_url
+    else:
+        issuer_url = (
+            f"https://cognito-idp.{settings.cognito_region}.amazonaws.com"
+            f"/{settings.cognito_user_pool_id}"
+        )
 
     mcp._token_verifier = verifier
     mcp.settings.auth = AuthSettings(
