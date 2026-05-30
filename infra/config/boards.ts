@@ -31,6 +31,14 @@ export interface BoardConfig {
   /** Pinecone code-history index name; defaults to 'giga-codehistory'. */
   pineconeCodehistoryIndexName?: string;
   /**
+   * Enable the claude.ai / mobile OAuth connector. Provisions a Cognito hosted-UI
+   * domain + authorization-code/PKCE grant on the app client, and the server serves
+   * its own OAuth authorization-server metadata so claude.ai web + the iPhone app can
+   * register the board as a Connector. Requires enableAuth: true. See
+   * MOBILE-CONNECTOR-OAUTH.md.
+   */
+  oauthConnectorEnabled?: boolean;
+  /**
    * Optional suffix on the Cognito pool name. Bump it to force CloudFormation
    * to REPLACE the pool — needed when the physical pool was deleted out-of-band
    * (drift) and CDK otherwise no-ops. Leave unset for healthy boards.
@@ -51,6 +59,7 @@ export const BOARDS: BoardConfig[] = [
     enableAuth: true,
     vectorEnabled: true,
     pineconeIndexName: "gigacorp-tickets",
+    oauthConnectorEnabled: true,
   },
   {
     boardId: "pitchvault-react",
@@ -64,6 +73,7 @@ export const BOARDS: BoardConfig[] = [
     enableAuth: true,
     pineconeIndexName: "pitchvault-tickets",
     cognitoPoolSuffix: "-v2",  // force replace: original pool was deleted out-of-band
+    oauthConnectorEnabled: true,
   },
   {
     boardId: "punch-pwa",
@@ -79,5 +89,6 @@ export const BOARDS: BoardConfig[] = [
     pineconeIndexName: "punch-tickets",
     codeHistoryEnabled: true,
     pineconeCodehistoryIndexName: "punch-codehistory",
+    oauthConnectorEnabled: true,
   },
 ];
