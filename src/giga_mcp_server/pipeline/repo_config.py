@@ -22,6 +22,19 @@ _DEFAULTS: dict[str, Any] = {
     "human_gate_after_planner": True,
     "branch_prefix": "auto/",
     "write_tests": True,
+    # CI-as-gate flow: commit → open draft PR → loop on REAL GitHub Actions CI
+    # output (build+test) instead of trusting the LLM validator's simulated
+    # review. The validator becomes a cheap one-shot pre-flight filter. Set
+    # ci_gate=False to keep the legacy validator-as-gate flow (e.g. repos with
+    # no PR CI or very slow CI). draft_prs controls whether the in-flight PR is
+    # opened as a draft and marked ready once green.
+    "ci_gate": True,
+    "draft_prs": True,
+    # How many real-CI fix cycles to attempt before giving up and leaving the
+    # PR as a draft for a human. Decoupled from max_retries_per_stage (which is
+    # for transient agent/API retries and costs Anthropic tokens) because CI
+    # cycles are cheap but converge fast — past ~5 it's usually stuck.
+    "ci_max_attempts": 5,
     "pipeline_model": None,  # None = use server default (claude-sonnet-4-6)
     # Hybrid code-history retrieval: vector finds top-k similar PRs by summary,
     # then fetch the actual patches from GitHub so agents see real code, not
@@ -43,6 +56,9 @@ class RepoConfig:
     human_gate_after_planner: bool = True
     branch_prefix: str = "auto/"
     write_tests: bool = True
+    ci_gate: bool = True
+    draft_prs: bool = True
+    ci_max_attempts: int = 5
     pipeline_model: str | None = None  # overrides _PIPELINE_MODEL in agent_runner
     code_history_hybrid: bool = False
     code_history_diff_chars_per_hit: int = 3000
@@ -62,6 +78,9 @@ class RepoConfig:
             human_gate_after_planner=merged["human_gate_after_planner"],
             branch_prefix=merged["branch_prefix"],
             write_tests=merged["write_tests"],
+            ci_gate=merged["ci_gate"],
+            draft_prs=merged["draft_prs"],
+            ci_max_attempts=merged["ci_max_attempts"],
             pipeline_model=merged["pipeline_model"],
             code_history_hybrid=merged["code_history_hybrid"],
             code_history_diff_chars_per_hit=merged["code_history_diff_chars_per_hit"],

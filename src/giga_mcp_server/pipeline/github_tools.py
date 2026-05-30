@@ -17,6 +17,7 @@ logger = structlog.get_logger()
 _GH_API = "https://api.github.com"
 _POLL_INTERVAL = 10  # seconds between CI status polls
 _POLL_TIMEOUT = 600  # seconds before giving up on CI
+_NO_CHECKS_GRACE = 30  # seconds to wait for any check to register before assuming none
 
 
 @dataclass
@@ -34,6 +35,8 @@ class PullRequest:
     url: str
     branch: str
     checks_url: str = ""
+    node_id: str = ""  # GraphQL global ID; required to mark a draft PR ready
+    draft: bool = False
 
 
 @dataclass
@@ -256,14 +259,21 @@ class GitHubClient:
         title: str,
         body: str,
         base_branch: str = "main",
+        draft: bool = False,
     ) -> PullRequest:
-        """Open a pull request. Returns PullRequest with number and URL."""
+        """Open a pull request. Returns PullRequest with number and URL.
+
+        draft: open as a draft PR. Used by the CI-gate flow so generated code
+               can be run through real CI before the PR is marked ready for
+               review. Convert to ready via mark_pr_ready() once CI is green.
+        """
         url = f"{_GH_API}/repos/{self._repo}/pulls"
         payload = {
             "title": title,
             "body": body,
             "head": branch,
             "base": base_branch,
+            "draft": draft,
         }
         async with httpx.AsyncClient(headers=self._headers) as client:
             resp = await client.post(url, json=payload)
@@ -275,9 +285,54 @@ class GitHubClient:
             url=data["html_url"],
             branch=branch,
             checks_url=data.get("statuses_url", ""),
+            node_id=data.get("node_id", ""),
+            draft=data.get("draft", draft),
         )
-        logger.info("pr_opened", repo=self._repo, pr=pr.number, url=pr.url)
+        logger.info("pr_opened", repo=self._repo, pr=pr.number, url=pr.url, draft=pr.draft)
         return pr
+
+    async def update_pull_request(
+        self, pr_number: int, *, title: str | None = None, body: str | None = None
+    ) -> None:
+        """Update a PR's title and/or body. Used to swap the provisional draft
+        title for the final minted PR text once CI is green."""
+        payload: dict[str, str] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if not payload:
+            return
+        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.patch(url, json=payload)
+            resp.raise_for_status()
+        logger.info("pr_updated", repo=self._repo, pr=pr_number)
+
+    async def mark_pr_ready(self, node_id: str) -> None:
+        """Mark a draft PR ready for review.
+
+        The REST API cannot toggle draft→ready, so this uses the GraphQL
+        markPullRequestReadyForReview mutation. node_id is the PR's GraphQL
+        global ID (PullRequest.node_id).
+        """
+        if not node_id:
+            logger.warning("mark_pr_ready_skipped", reason="no node_id")
+            return
+        query = (
+            "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"
+            "{pullRequest{isDraft}}}"
+        )
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.post(
+                f"{_GH_API}/graphql",
+                json={"query": query, "variables": {"id": node_id}},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(f"mark_pr_ready failed: {data['errors']}")
+        logger.info("pr_marked_ready", repo=self._repo)
 
     async def get_pr_status(self, pr_number: int) -> ChecksStatus:
         """Get the current CI check status for a PR."""
@@ -526,8 +581,15 @@ class GitHubClient:
         pr_number: int,
         timeout: int = _POLL_TIMEOUT,
         interval: int = _POLL_INTERVAL,
+        no_checks_grace: int = _NO_CHECKS_GRACE,
     ) -> ChecksStatus:
-        """Poll PR checks until all complete or timeout is reached."""
+        """Poll PR checks until all complete or timeout is reached.
+
+        Returns state="none" if no check runs ever register within
+        no_checks_grace seconds — this distinguishes "repo has no CI on PRs"
+        from "checks are still pending". Without it, a checkless repo would
+        block the whole grace→timeout window and then report a false failure.
+        """
         elapsed = 0
         while elapsed < timeout:
             status = await self.get_pr_status(pr_number)
@@ -540,6 +602,13 @@ class GitHubClient:
                     failed=len(status.failed),
                 )
                 return status
+            # No checks have registered at all. If that persists past the grace
+            # period, treat the repo as having no PR CI rather than waiting out
+            # the full timeout.
+            no_checks_yet = not (status.passed or status.failed or status.pending)
+            if no_checks_yet and elapsed >= no_checks_grace:
+                logger.info("pr_no_checks", pr=pr_number, elapsed=elapsed)
+                return ChecksStatus(state="none")
             logger.info("pr_checks_pending", pr=pr_number, elapsed=elapsed)
             await asyncio.sleep(interval)
             elapsed += interval
