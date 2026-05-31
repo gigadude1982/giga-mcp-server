@@ -40,6 +40,7 @@ export class GigaMcpServerStack extends cdk.Stack {
           pineconeIndexName: board.pineconeIndexName,
           codeHistoryEnabled: board.codeHistoryEnabled,
           pineconeCodehistoryIndexName: board.pineconeCodehistoryIndexName,
+          oauthConnectorEnabled: board.oauthConnectorEnabled,
           ecrRepo,
           accessRoleArn: ACCESS_ROLE_ARN,
           instanceRoleArn: INSTANCE_ROLE_ARN,

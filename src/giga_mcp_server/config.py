@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     cognito_client_id: str = ""
     public_url: str = ""  # e.g. https://mcp.gigacorp.co — used for OAuth resource metadata
 
+    # Mobile / claude.ai OAuth connector. When enabled, the server advertises its own
+    # OAuth authorization-server metadata (pointing at the Cognito hosted UI) so claude.ai
+    # web + iPhone can register it as a Connector via the authorization-code + PKCE flow.
+    # See MOBILE-CONNECTOR-OAUTH.md.
+    oauth_connector_enabled: bool = False
+    cognito_hosted_ui_domain: str = ""  # full base, e.g. https://giga-mcp-punch-pwa.auth.us-east-1.amazoncognito.com
+    cognito_oauth_scopes: str = "openid profile email"
+
     # GitHub — required for autonomous pipeline
     github_token: str = Field(default="", description="GitHub PAT (repo + workflow scopes)")
     github_repo: str = Field(default="", description="Target repo in owner/repo format")

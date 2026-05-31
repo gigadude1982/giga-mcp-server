@@ -48,6 +48,12 @@ export interface GigaMcpServerServiceProps {
   codeHistoryEnabled?: boolean;
   /** Code-history Pinecone index name; defaults to 'giga-codehistory'. */
   pineconeCodehistoryIndexName?: string;
+  /**
+   * Enable the claude.ai / mobile OAuth connector: provisions a Cognito hosted-UI
+   * domain and adds the authorization-code + PKCE grant to the app client. The
+   * server serves its own OAuth authorization-server metadata. Requires enableAuth.
+   */
+  oauthConnectorEnabled?: boolean;
   /** App Runner CPU units; defaults to '256' (0.25 vCPU). */
   cpu?: string;
   /** App Runner memory in MB; defaults to '512' (0.5 GB). */
@@ -103,6 +109,7 @@ export class GigaMcpServerService extends Construct {
       pineconeIndexName = 'giga-tickets',
       codeHistoryEnabled = false,
       pineconeCodehistoryIndexName = 'giga-codehistory',
+      oauthConnectorEnabled = false,
       cpu = '256',
       memory = '512',
     } = props;
@@ -111,8 +118,17 @@ export class GigaMcpServerService extends Construct {
       throw new Error('codeHistoryEnabled requires vectorEnabled because it reuses the Pinecone API key.');
     }
 
+    if (oauthConnectorEnabled && !enableAuth) {
+      throw new Error('oauthConnectorEnabled requires enableAuth (the OAuth flow needs the Cognito pool + client).');
+    }
+
     const prefix = `giga-mcp-${boardId}`;
     const stack = cdk.Stack.of(this);
+
+    // Cognito hosted-UI domain (only created when the OAuth connector is enabled).
+    // The domain prefix must be globally unique per region — change it if cdk
+    // deploy reports the prefix is taken.
+    const hostedUiBaseUrl = `https://${prefix}.auth.${stack.region}.amazoncognito.com`;
     const ssmParamArn = (name: string) =>
       `arn:aws:ssm:${stack.region}:${stack.account}:parameter/giga-mcp-server/${boardId}/${name}`;
 
@@ -142,7 +158,28 @@ export class GigaMcpServerService extends Construct {
       userPoolClientName: `${prefix}-client`,
       authFlows: { userPassword: true, userSrp: true },
       generateSecret: false,
+      // claude.ai / mobile connector: authorization-code + PKCE (S256). Public
+      // client (no secret) — leave Claude's "Client Secret" field blank.
+      ...(oauthConnectorEnabled
+        ? {
+            oAuth: {
+              flows: { authorizationCodeGrant: true },
+              scopes: [
+                cognito.OAuthScope.OPENID,
+                cognito.OAuthScope.PROFILE,
+                cognito.OAuthScope.EMAIL,
+              ],
+              callbackUrls: ['https://claude.ai/api/mcp/auth_callback'],
+            },
+          }
+        : {}),
     });
+
+    if (oauthConnectorEnabled) {
+      this.userPool.addDomain('HostedUiDomain', {
+        cognitoDomain: { domainPrefix: prefix },
+      });
+    }
 
     // ── App Runner service ──────────────────────────────────────────────────
     this.service = new apprunner.CfnService(this, 'Service', {
@@ -177,6 +214,10 @@ export class GigaMcpServerService extends Construct {
               ...(codeHistoryEnabled ? [
                 { name: 'GIGA_CODEHISTORY_ENABLED', value: 'true' },
                 { name: 'GIGA_PINECONE_CODEHISTORY_INDEX_NAME', value: pineconeCodehistoryIndexName },
+              ] : []),
+              ...(oauthConnectorEnabled ? [
+                { name: 'GIGA_OAUTH_CONNECTOR_ENABLED', value: 'true' },
+                { name: 'GIGA_COGNITO_HOSTED_UI_DOMAIN', value: hostedUiBaseUrl },
               ] : []),
             ],
             runtimeEnvironmentSecrets: [
@@ -244,5 +285,16 @@ export class GigaMcpServerService extends Construct {
       description: `Cognito app client ID for the ${boardId} board`,
       value: this.userPoolClient.userPoolClientId,
     });
+
+    if (oauthConnectorEnabled) {
+      new cdk.CfnOutput(this, 'OAuthHostedUiDomain', {
+        description: `Cognito hosted-UI base URL for the ${boardId} OAuth connector`,
+        value: hostedUiBaseUrl,
+      });
+      new cdk.CfnOutput(this, 'OAuthConnectorUrl', {
+        description: `Add as a claude.ai custom connector; paste CognitoAppClientId under Advanced settings, leave secret blank`,
+        value: `${this.endpointUrl}/mcp`,
+      });
+    }
   }
 }
