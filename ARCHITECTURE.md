@@ -31,9 +31,9 @@ Claude Desktop / claude.ai ──(MCP over streamable-http, Cognito-auth'd)─�
                           ┌───────────────────────────────────────────────────┤
                           ▼                                                     ▼
                   Enrichment (Haiku)                              Autonomous pipeline (per-stage models)
-                  - analyze/enrich ticket                         Digester → Planner →[Impl ∥ Tests]→ Validator ↺ → PR Minter
+                  - analyze/enrich ticket                         Digest→Plan→[Impl ∥ Tests]→pre-flight→draft PR→REAL CI ↺→ready
                   - dup detection (Pinecone)                      - writes code via GitHub Git Data API (atomic commit)
-                          │                                       - grounded in code-history (merged-PR memory)
+                          │                                       - language-aware rule packs + code-history grounding
                           ▼                                                     │
                      JIRA (REST)  <───── status transitions, comments, plan ───┘
                           ▲
@@ -88,20 +88,32 @@ Defined as prompts + I/O JSON schemas in `pipeline/agent_prompts.py:AGENT_REGIST
 by `pipeline/orchestrator.py`.
 
 ```
-Digester → Planner → [Implementers ∥ Test Writers] → Validator ↺ → PR Minter
-                          ↑________ retry on validator fail (capped) ________|
+Digester → Planner → [Implementers ∥ Test Writers] → Validator (pre-flight filter)
+                                                          ↓
+                          commit → DRAFT PR → REAL GitHub Actions CI ↺ → mark ready → PR Minter
+                                      ↑___fix from distilled CI logs (capped)___|
 ```
 
 - **Digester** normalizes the raw ticket into a structured spec.
 - **Planner** emits the file list, approach, and test strategy — anchored on the repo's
   **existing files + relevant file contents** (this is why it's a *feature-addition* engine,
   not a greenfield scaffolder — see decisions).
-- **Implementers / Test Writers** run in parallel; both are additionally **grounded in
-  code-history** (similar past merged PRs).
-- **Validator** checks implementation ↔ test coherence and reviews the diff **statically**.
-  On blocking issues it feeds them back to the Implementer and retries, up to
-  `GIGA_PIPELINE_MAX_RETRIES`.
+- **Implementers / Test Writers** run in parallel; both are grounded in **code-history**
+  (similar past merged PRs) **and in language-aware rule packs** — see below.
+- **Validator** is a **cheap one-shot pre-flight filter**, *not* the gate. It statically
+  reviews the diff once (plus one corrective regeneration if it flags issues) so an obviously
+  broken change doesn't waste a real CI run. Authoritative correctness is decided by CI.
 - **PR Minter** writes the PR title/body/commit message.
+
+**Language-aware rule packs (`pipeline/rule_packs.py`).** The agent prompts in
+`agent_prompts.py` are stack-agnostic; the concrete per-language rules (typed props vs
+PropTypes, `tsc` constraints, Jest's `global`→`globalThis`, formatter rules) live in rule
+packs keyed by stack (`python` / `javascript-react` / `typescript-react`) and are appended to
+the implementer/test_writer/validator system prompt at runtime. The stack is resolved from the
+repo's `.giga-pipeline.json` `language` (or an explicit `stack` override); an unknown stack
+falls back to no extra rules and relies on `coding_standards`. *This is why a TypeScript repo
+no longer gets PropTypes-laden, non-compiling code while a JavaScript repo still does the
+React-with-PropTypes thing it expects.*
 
 **Per-stage model routing** — each agent carries a `model`; the runner resolves
 `model_override > per-stage model > default`:
@@ -120,21 +132,36 @@ tickets.)*
 **Atomic commits.** Files land via the **GitHub Git Data API** as a single commit — no
 intermediate states, no partial pushes.
 
-**Execution feedback via CI.** The Validator's review is *static* (it reasons over the diff,
-not a running program), but the pipeline doesn't stop there: after the PR is opened it **polls
-the PR's GitHub Actions CI** (`poll_pr_until_complete`), and on failure it **fetches the
-failure logs, feeds them back to the Implementer/Test-Writer, re-validates, commits a fix to
-the same branch, and re-polls** — a bounded build/test feedback loop with **CI as the execution
-environment**. If it's still red after the fix cycle, it comments "manual review required" on
-the ticket. The important caveat: **this only engages if the target repo has CI** that builds
-and tests PRs; with no CI there are no checks to fail, so the loop stays dormant.
+**Real CI is the gate (`ci_gate`, default on).** The Validator's review is static, so it's
+demoted to the pre-flight filter above; **authoritative correctness comes from real GitHub
+Actions CI**. The flow (`orchestrator._run_ci_gate_flow`): commit → open a **draft** PR → poll
+CI → on failure, **distill the failure logs** and feed them to the Implementer/Test-Writer,
+commit a fix to the same branch, and re-poll — up to **`ci_max_attempts`** times (default 5,
+separate from `max_retries_per_stage` which governs transient agent retries). When CI goes
+green, the PR is **marked ready for review** and the ticket moves to *In Code Review*. Every
+retry is driven by real build/test output, not a simulated review.
+
+Three correctness details this loop depends on, each learned from a watched run:
+- **Polling is pinned to the pushed commit SHA.** GitHub's `PR.head.sha` lags a Git Data API
+  ref update by seconds; an unpinned poll would read the *previous* commit's (failed) checks
+  immediately after a fix and burn every attempt in ~2s. Checks are keyed by SHA, so we pin it.
+- **CI logs are distilled** (`_distill_log`) before feedback: timestamps and `node_modules`
+  stack frames are stripped, and each failure header (tsc error, Jest `●`, assertion diff, RTL
+  "Found multiple elements") is kept with context. Otherwise the Implementer fixes half-blind
+  against a wall of stack frames.
+- **A closed PR / no-CI repo is detected, not waited on.** A closed PR gets no `pull_request`
+  CI on new commits, so the poller checks PR state and returns `closed` instead of hanging to
+  the timeout. A repo with no PR CI at all returns `none` after a short grace and the run
+  finalizes on the pre-flight verdict (`ci_gate: false` keeps the legacy validator-as-gate flow
+  as an escape hatch).
 
 **Two-call `process_ticket` flow** (gated by `GIGA_PIPELINE_HUMAN_GATE`):
 1. `process_ticket(issue_key)` → Digester + Planner, posts plan to JIRA, status
    `awaiting_approval`.
 2. `process_ticket(issue_key, approve_plan=True)` → resumes from the saved plan, runs
-   Implementer/Test/Validator/PR Minter. `force=True` reprocesses terminal tickets;
-   `force=True, approve_plan=True` skips the gate end-to-end.
+   Implement/Test → pre-flight Validator → draft PR → real-CI gate → mark ready → PR Minter.
+   `force=True` reprocesses terminal tickets; `force=True, approve_plan=True` skips the gate
+   end-to-end.
 
 **State:** pipeline runs live in an in-memory `dict` (`AppContext.pipeline_runs`). It's
 **not persisted** — a restart loses in-flight runs. Anything needing durability reads **JIRA
@@ -195,12 +222,20 @@ These are the "why X and not Y" questions worth being able to answer cold.
   So the pattern is **establish a foundation by hand, then let the pipeline evolve it** — which
   also matches the target use case (an existing app). Greenfield (an "architect" stage that
   designs the skeleton first) is roadmap.
-- **CI as the execution sandbox vs. a local pre-PR build.** The Validator is static, but the
-  pipeline gets real build/test signal by polling the PR's CI and feeding failures back into a
-  bounded fix-and-recommit loop — execution without the server needing to run a working tree.
-  Trade-off: it's *post-PR* (a failing PR is opened, then fixed) and **depends on the target
-  repo having CI**. A local/pre-PR build sandbox could catch failures before the PR is opened,
-  at the cost of running untrusted generated code on the server — deliberately avoided for now.
+- **Real CI as the gate vs. trusting the static Validator.** Originally the Validator (a static
+  LLM review) decided whether to open the PR. That was blind — it can't actually compile or run
+  tests — so the loop guessed. Now **real GitHub Actions CI is the gate**: the change lands on a
+  **draft** PR, the bounded loop fixes against *real* build/test output (distilled), and the PR
+  is marked ready only when CI is green. The Validator is kept as a cheap pre-flight filter so a
+  CI run isn't wasted on obviously broken output. Trade-off: it **depends on the target repo
+  having CI** (handled — closed/no-CI cases short-circuit instead of hanging) and a fix cycle is
+  a real CI run (minutes). A local/pre-PR build sandbox could compile before committing and skip
+  CI round-trips, at the cost of running untrusted generated code on the server — that's the
+  next optimization, not the current bottleneck.
+- **Language-aware rule packs vs. one hardcoded stack.** The prompts were hardcoded
+  JavaScript-React (PropTypes, JS Jest idioms) and produced non-compiling code on a TypeScript
+  repo. Splitting the stack-specific rules into `rule_packs.py` keyed off `language` lets one
+  pipeline serve JS and TS repos correctly; unknown stacks fall back to `coding_standards` only.
 - **Bearer token vs. full OAuth connector.** Desktop bearer is simple and works today; the
   claude.ai/mobile native connector needs the OAuth authorization-code flow (Cognito hosted UI),
   and Cognito lacks Dynamic Client Registration — a real integration cost, deliberately deferred.
@@ -217,10 +252,13 @@ These are the "why X and not Y" questions worth being able to answer cold.
 
 Naming these (and the plan) is the point — it's what a senior candidate does.
 
-- **Execution validation depends on target-repo CI** — the pipeline already polls CI and
-  fixes on failure, but it only engages if the repo *has* CI building/testing PRs (punch-pwa
-  currently has none). *Plan:* ship a CI workflow with each board's repo; optionally add a
-  pre-PR local build sandbox so failures are caught before the PR is opened.
+- **Execution validation depends on target-repo CI** — real CI is now the gate and the fix
+  loop runs against it, but it only engages if the repo *has* PR CI (closed/no-CI cases
+  short-circuit cleanly rather than hang). *Plan:* a pre-PR **local build sandbox** that
+  compiles/tests generated code before committing — skips CI round-trips and catches failures
+  even on repos without CI. This is now an optimization, not a blocker: the language rule packs
+  already get generated code compiling (validated end-to-end on punch-pwa: a TypeScript ticket
+  taken to a CI-green, review-ready PR autonomously).
 - **Feature-addition only, not greenfield** — *Plan:* an "architect" stage that designs the
   skeleton + conventions from requirements, then fans tickets against it.
 - **Mobile / claude.ai connector** — needs Cognito hosted-UI OAuth + a DCR workaround (see
@@ -238,5 +276,5 @@ Naming these (and the plan) is the point — it's what a senior candidate does.
 ## Operational gotchas
 
 See `CLAUDE.md` → "Things that bite" for the live list (version-bump on `pip install -e .`,
-React-flavored agent prompts, JIRA workflow statuses needing manual transitions, Pinecone
-opt-in + backfill, etc.).
+adding a rule pack for a new stack in `rule_packs.py`, JIRA workflow statuses needing manual
+transitions, Pinecone opt-in + backfill, etc.).

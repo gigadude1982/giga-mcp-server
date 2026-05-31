@@ -390,6 +390,16 @@ class GitHubClient:
             raise RuntimeError(f"mark_pr_ready failed: {data['errors']}")
         logger.info("pr_marked_ready", repo=self._repo)
 
+    async def _pr_is_open(self, pr_number: int) -> bool:
+        """True if the PR is still open. A closed PR stops GitHub from firing
+        pull_request CI on new commits, so the poller must give up instead of
+        waiting out the timeout for checks that will never register."""
+        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json().get("state") == "open"
+
     async def get_pr_status(
         self, pr_number: int, head_sha: str | None = None
     ) -> ChecksStatus:
@@ -673,13 +683,19 @@ class GitHubClient:
                     failed=len(status.failed),
                 )
                 return status
-            # No checks have registered yet. If we don't require them and that
-            # persists past the grace period, treat the repo as having no PR CI
-            # rather than waiting out the full timeout.
+            # No checks have registered yet — investigate why before waiting on.
             no_checks_yet = not (status.passed or status.failed or status.pending)
-            if no_checks_yet and not require_checks and elapsed >= no_checks_grace:
-                logger.info("pr_no_checks", pr=pr_number, elapsed=elapsed)
-                return ChecksStatus(state="none")
+            if no_checks_yet:
+                # A closed PR will never get pull_request CI — give up clearly
+                # instead of waiting out the full timeout.
+                if not await self._pr_is_open(pr_number):
+                    logger.warning("pr_closed_no_ci", pr=pr_number, elapsed=elapsed)
+                    return ChecksStatus(state="closed")
+                # Open repo with no PR CI configured: fall back to "none" after
+                # the grace period (only when checks aren't required).
+                if not require_checks and elapsed >= no_checks_grace:
+                    logger.info("pr_no_checks", pr=pr_number, elapsed=elapsed)
+                    return ChecksStatus(state="none")
             logger.info(
                 "pr_checks_pending", pr=pr_number, elapsed=elapsed,
                 awaiting_checks=no_checks_yet,

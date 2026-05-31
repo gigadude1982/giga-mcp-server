@@ -438,6 +438,18 @@ class PipelineOrchestrator:
             state.status = "failed"
             state.error = "CI polling timed out"
             return
+        if ci_status.state == "closed":
+            # The PR was closed out-of-band, so GitHub stopped running CI on new
+            # commits. Don't wait out the timeout — stop with a clear reason.
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"⚠️ PR #{pr.number} was closed before CI could verify the change, "
+                f"so the pipeline can't confirm it. Reopen the PR or re-run the ticket.\n"
+                f"PR: {pr.url}"
+            )
+            state.status = "failed"
+            state.error = f"PR #{pr.number} was closed before CI completed"
+            return
         if ci_status.state == "none":
             # Repo has no PR CI — the pre-flight validator was the only gate.
             logger.warning(

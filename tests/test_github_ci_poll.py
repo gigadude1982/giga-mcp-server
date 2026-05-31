@@ -67,6 +67,7 @@ async def test_require_checks_does_not_short_circuit_to_none():
             ChecksStatus(state="success", passed=["build"]),
         ]
     )
+    gh._pr_is_open = AsyncMock(return_value=True)  # PR open → keep waiting
     res = await gh.poll_pr_until_complete(
         7, timeout=100, interval=0, no_checks_grace=0, head_sha="newsha", require_checks=True
     )
@@ -82,10 +83,24 @@ async def test_no_checks_falls_back_to_none_when_not_required():
     # run doesn't block to the timeout.
     gh = _client()
     gh.get_pr_status = AsyncMock(return_value=ChecksStatus(state="pending"))
+    gh._pr_is_open = AsyncMock(return_value=True)  # open, just no CI configured
     res = await gh.poll_pr_until_complete(
         7, timeout=100, interval=0, no_checks_grace=0, require_checks=False
     )
     assert res.state == "none"
+
+
+@pytest.mark.asyncio
+async def test_closed_pr_aborts_instead_of_hanging():
+    # A closed PR gets no pull_request CI on new commits — the poller must give
+    # up with state="closed" rather than wait out the timeout.
+    gh = _client()
+    gh.get_pr_status = AsyncMock(return_value=ChecksStatus(state="pending"))
+    gh._pr_is_open = AsyncMock(return_value=False)
+    res = await gh.poll_pr_until_complete(
+        7, timeout=100, interval=0, no_checks_grace=0, head_sha="x", require_checks=True
+    )
+    assert res.state == "closed"
 
 
 @pytest.mark.asyncio
