@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +10,61 @@ import httpx
 import structlog
 
 logger = structlog.get_logger()
+
+# CI-log distillation. GitHub Actions logs are huge and prefixed with ISO
+# timestamps; naive keyword-greping surfaces a wall of dependency stack frames
+# (`at Object.foo (node_modules/...)`) and buries the one line the implementer
+# needs (the tsc error, the assertion diff, the RTL "Found multiple elements").
+# These patterns extract the actionable failure blocks instead.
+_TS_PREFIX = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s")
+# Noise to drop outright: stack frames and GitHub Actions runner ceremony.
+_LOG_NOISE = re.compile(
+    r"(^\s*at\s|node_modules|Post job cleanup|Temporarily overriding HOME|"
+    r"Adding repository directory|/usr/bin/git|^git version|^\[command\]|"
+    r"##\[(group|endgroup)\])"
+)
+# Lines that start a meaningful failure block — keep these plus trailing context.
+_LOG_HEADER = re.compile(
+    r"(●\s|^\s*FAIL\s|error TS\d|✕|✗|×|AssertionError|[A-Za-z]*Error:\s|"
+    r"Found multiple elements|Unable to find|is not assignable|"
+    r"Cannot find name|Property '|\d+:\d+\s+error|\bFAILED\b)"
+)
+# Standalone signal lines worth keeping even without a following block.
+_LOG_SIGNAL = re.compile(
+    r"(Expected|Received|Test Suites:|Tests:|SyntaxError|TypeError|ReferenceError)"
+)
+
+
+def _distill_log(text: str, *, max_lines: int = 140, context: int = 6) -> str:
+    """Pull the actionable lines out of a raw CI job log.
+
+    Strips ISO timestamps, drops node_modules stack frames, and keeps each
+    failure header plus a few following lines (so the assertion/diff/render
+    that explains a failure survives). Collapses blank runs.
+    """
+    kept: list[str] = []
+    ctx_remaining = 0
+    for raw in text.splitlines():
+        line = _TS_PREFIX.sub("", raw).rstrip()
+        if _LOG_NOISE.search(line):
+            continue
+        if _LOG_HEADER.search(line):
+            kept.append(line)
+            ctx_remaining = context
+        elif ctx_remaining > 0:
+            kept.append(line)
+            ctx_remaining -= 1
+        elif _LOG_SIGNAL.search(line):
+            kept.append(line)
+        if len(kept) >= max_lines:
+            break
+
+    collapsed: list[str] = []
+    for line in kept:
+        if not line.strip() and (collapsed and not collapsed[-1].strip()):
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed).strip()
 
 # TODO: consider replacing with github mcp server if cleaner
 # or SDK e.g. from github import Github
@@ -383,11 +439,14 @@ class GitHubClient:
 
         return ChecksStatus(state=state, passed=passed, failed=failed, pending=pending)
 
-    async def get_failed_check_logs(self, pr_number: int, max_chars: int = 3000) -> str:
+    async def get_failed_check_logs(self, pr_number: int, max_chars: int = 6000) -> str:
         """Fetch stdout logs from failed CI check runs for a PR.
 
-        Returns a condensed string of the failure output suitable for feeding
-        back to the implementer as ci_failure_feedback.
+        Returns a distilled string of the failure output suitable for feeding
+        back to the implementer as ci_failure_feedback. The distillation keeps
+        the actionable failure blocks (tsc errors, assertion diffs, RTL "Found
+        multiple elements" messages) and drops timestamp prefixes and
+        node_modules stack frames so the model sees signal, not noise.
         """
         url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
         async with httpx.AsyncClient(headers=self._headers) as client:
@@ -415,13 +474,9 @@ class GitHubClient:
                         log_url = f"{_GH_API}/repos/{self._repo}/actions/jobs/{job['id']}/logs"
                         log_resp = await client.get(log_url, follow_redirects=True)
                         if log_resp.status_code == 200:
-                            # Extract only error-relevant lines
-                            lines = log_resp.text.splitlines()
-                            error_lines = [
-                                line for line in lines
-                                if any(kw in line for kw in ("error", "Error", "ERROR", "failed", "FAIL", "✗", "×"))
-                            ]
-                            failure_logs.append(f"Job: {job['name']}\n" + "\n".join(error_lines[:50]))
+                            distilled = _distill_log(log_resp.text)
+                            if distilled:
+                                failure_logs.append(f"Job: {job['name']}\n{distilled}")
                 except Exception:
                     if logs_url:
                         failure_logs.append(f"Check: {run['name']} — see {logs_url}")
