@@ -334,16 +334,25 @@ class GitHubClient:
             raise RuntimeError(f"mark_pr_ready failed: {data['errors']}")
         logger.info("pr_marked_ready", repo=self._repo)
 
-    async def get_pr_status(self, pr_number: int) -> ChecksStatus:
-        """Get the current CI check status for a PR."""
-        # Get the PR's head SHA
-        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            head_sha = resp.json()["head"]["sha"]
+    async def get_pr_status(
+        self, pr_number: int, head_sha: str | None = None
+    ) -> ChecksStatus:
+        """Get the current CI check status for a PR.
 
-            # Fetch check runs
+        head_sha: pin the check lookup to a specific commit. Pass the SHA
+            returned by commit_changes after pushing — otherwise we read the
+            PR's reported head.sha, which lags behind a Git Data API ref update
+            by a few seconds and would surface the PREVIOUS commit's (failed)
+            checks immediately after a fix push. check-runs are keyed by commit
+            SHA, so pinning the SHA we just pushed eliminates that race.
+        """
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            if head_sha is None:
+                resp = await client.get(f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}")
+                resp.raise_for_status()
+                head_sha = resp.json()["head"]["sha"]
+
+            # Fetch check runs for the pinned commit
             checks_url = f"{_GH_API}/repos/{self._repo}/commits/{head_sha}/check-runs"
             resp = await client.get(checks_url)
             resp.raise_for_status()
@@ -582,17 +591,24 @@ class GitHubClient:
         timeout: int = _POLL_TIMEOUT,
         interval: int = _POLL_INTERVAL,
         no_checks_grace: int = _NO_CHECKS_GRACE,
+        head_sha: str | None = None,
+        require_checks: bool = False,
     ) -> ChecksStatus:
         """Poll PR checks until all complete or timeout is reached.
 
-        Returns state="none" if no check runs ever register within
-        no_checks_grace seconds — this distinguishes "repo has no CI on PRs"
-        from "checks are still pending". Without it, a checkless repo would
-        block the whole grace→timeout window and then report a false failure.
+        head_sha: pin polling to a specific commit (see get_pr_status). Always
+            pass the SHA returned by commit_changes so a just-pushed fix isn't
+            judged against the previous commit's stale checks.
+        require_checks: when True, never short-circuit to "none" — keep waiting
+            for checks to register. Use after a fix push to a repo we already
+            know has CI: checks for the new commit take a few seconds to appear,
+            and bailing to "none" in that window would skip the gate. When
+            False (the initial poll), a checkless repo still falls back to
+            "none" after no_checks_grace instead of blocking to the timeout.
         """
         elapsed = 0
         while elapsed < timeout:
-            status = await self.get_pr_status(pr_number)
+            status = await self.get_pr_status(pr_number, head_sha=head_sha)
             if status.state != "pending":
                 logger.info(
                     "pr_checks_complete",
@@ -602,14 +618,17 @@ class GitHubClient:
                     failed=len(status.failed),
                 )
                 return status
-            # No checks have registered at all. If that persists past the grace
-            # period, treat the repo as having no PR CI rather than waiting out
-            # the full timeout.
+            # No checks have registered yet. If we don't require them and that
+            # persists past the grace period, treat the repo as having no PR CI
+            # rather than waiting out the full timeout.
             no_checks_yet = not (status.passed or status.failed or status.pending)
-            if no_checks_yet and elapsed >= no_checks_grace:
+            if no_checks_yet and not require_checks and elapsed >= no_checks_grace:
                 logger.info("pr_no_checks", pr=pr_number, elapsed=elapsed)
                 return ChecksStatus(state="none")
-            logger.info("pr_checks_pending", pr=pr_number, elapsed=elapsed)
+            logger.info(
+                "pr_checks_pending", pr=pr_number, elapsed=elapsed,
+                awaiting_checks=no_checks_yet,
+            )
             await asyncio.sleep(interval)
             elapsed += interval
 

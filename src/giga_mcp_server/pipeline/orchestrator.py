@@ -346,7 +346,7 @@ class PipelineOrchestrator:
         minted = await self._mint(ctx, files_changed, validation.get("summary", ""))
 
         state.stage = "committing"
-        await self._github.commit_changes(
+        commit_sha = await self._github.commit_changes(
             branch=state.branch,
             files=self._build_file_changes(ctx, impl_outputs, test_outputs),
             message=minted["commit_message"],
@@ -374,8 +374,12 @@ class PipelineOrchestrator:
         )
 
         # ── Phase 3: Real CI loop = the gate ──────────────────────────────
+        # Pin polling to the SHA we just pushed — GitHub's PR.head.sha lags a
+        # ref update by seconds, so an unpinned poll would read the prior
+        # commit's checks. require_checks stays False here so a repo with no PR
+        # CI falls back to state="none".
         state.stage = "waiting_for_ci"
-        ci_status = await self._github.poll_pr_until_complete(pr.number)
+        ci_status = await self._github.poll_pr_until_complete(pr.number, head_sha=commit_sha)
         state.ci_state = ci_status.state
 
         attempt = 0
@@ -398,15 +402,20 @@ class PipelineOrchestrator:
                 ctx, validator_feedback=ci_feedback
             )
             state.stage = "committing"
-            await self._github.commit_changes(
+            fix_sha = await self._github.commit_changes(
                 branch=state.branch,
                 files=self._build_file_changes(ctx, impl_outputs, test_outputs),
                 message=f"fix: address CI failures (attempt {attempt})\n\n{minted['commit_message']}",
             )
-            logger.info("ci_fix_committed", branch=state.branch, attempt=attempt)
+            logger.info("ci_fix_committed", branch=state.branch, attempt=attempt, sha=fix_sha[:8])
 
+            # Pin to the fix SHA and require checks: we know this repo has CI,
+            # so wait for the NEW run to register rather than reading the prior
+            # commit's stale failure (which would burn every attempt instantly).
             state.stage = "waiting_for_ci"
-            ci_status = await self._github.poll_pr_until_complete(pr.number)
+            ci_status = await self._github.poll_pr_until_complete(
+                pr.number, head_sha=fix_sha, require_checks=True
+            )
             state.ci_state = ci_status.state
 
         # ── Phase 4: Finalize ─────────────────────────────────────────────
@@ -493,7 +502,7 @@ class PipelineOrchestrator:
         minted = await self._mint(ctx, files_changed, validation.get("summary", ""))
 
         state.stage = "committing"
-        await self._github.commit_changes(
+        commit_sha = await self._github.commit_changes(
             branch=state.branch,
             files=self._build_file_changes(ctx, impl_outputs, test_outputs),
             message=minted["commit_message"],
@@ -515,7 +524,7 @@ class PipelineOrchestrator:
         await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
 
         state.stage = "waiting_for_ci"
-        ci_status = await self._github.poll_pr_until_complete(pr.number)
+        ci_status = await self._github.poll_pr_until_complete(pr.number, head_sha=commit_sha)
         state.ci_state = ci_status.state
 
         if ci_status.state == "failure":
@@ -549,15 +558,17 @@ class PipelineOrchestrator:
                 return
 
             state.stage = "committing"
-            await self._github.commit_changes(
+            fix_sha = await self._github.commit_changes(
                 branch=state.branch,
                 files=self._build_file_changes(ctx, impl_outputs, test_outputs),
                 message=f"fix: address CI failures\n\n{minted['commit_message']}",
             )
-            logger.info("ci_fix_committed", branch=state.branch)
+            logger.info("ci_fix_committed", branch=state.branch, sha=fix_sha[:8])
 
             state.stage = "waiting_for_ci"
-            ci_status = await self._github.poll_pr_until_complete(pr.number)
+            ci_status = await self._github.poll_pr_until_complete(
+                pr.number, head_sha=fix_sha, require_checks=True
+            )
             state.ci_state = ci_status.state
 
             if ci_status.state == "failure":
