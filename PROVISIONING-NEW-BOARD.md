@@ -72,7 +72,7 @@ Bender writes code into the target repo via the Git Data API — but the target 
 }
 ```
 
-Adjust per the target stack. Full schema documented in [README → Repo pipeline config](README.md#repo-pipeline-config-optional).
+Adjust per the target stack. `language` selects the rule pack the agents are instructed with (`javascript`→`javascript-react`, `typescript`→`typescript-react`, `python`→`python`; set `stack` explicitly to override) — get this right or generated code will use the wrong stack's idioms. Real GitHub Actions CI is the gate by default (`ci_gate: true`), so the target repo should have a `pull_request` CI workflow that builds/tests; without one the pipeline falls back to the static pre-flight verdict. Full schema in [README → Repo pipeline config](README.md#repo-pipeline-config-optional).
 
 **For React + PWA targets**, see [`PUNCH-TAMAGOTCHI-PLAN.md`](PUNCH-TAMAGOTCHI-PLAN.md) for a worked example (Vite + React + TS + vite-plugin-pwa + Jest), and the `gigadude1982/punch-pwa` repo as a reference scaffold.
 

@@ -17,6 +17,7 @@ from giga_mcp_server.pipeline.jira_bridge import (
     transition_ticket,
 )
 from giga_mcp_server.pipeline.repo_config import RepoConfig, load_repo_config
+from giga_mcp_server.pipeline.rule_packs import resolve_stack, system_suffix
 from giga_mcp_server.vector import CodeHistoryStore
 
 logger = structlog.get_logger()
@@ -57,6 +58,23 @@ class PipelineState:
         if self.error:
             lines.append(f"**Error:** {self.error}")
         return "\n".join(lines)
+
+
+@dataclass
+class _GateContext:
+    """Immutable-per-run inputs shared by the implement/validate/commit/PR
+    helpers. Bundled so the two gate flows and their helpers take one arg
+    instead of threading eight positional parameters through every call."""
+
+    ticket_key: str
+    state: PipelineState
+    config: RepoConfig
+    spec: dict[str, Any]
+    plan: dict[str, Any]
+    impl_files: list[dict[str, Any]]
+    test_file_specs: list[dict[str, Any]]
+    existing_contents: dict[str, str]
+    past_review_signals: list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +263,6 @@ class PipelineOrchestrator:
         spec: dict[str, Any],
         plan: dict[str, Any],
     ) -> None:
-        max_retries = config.max_retries_per_stage
-
         # ── Create branch ────────────────────────────────────────────────
         base_branch_name = f"{config.branch_prefix}{ticket_key.lower()}"
         branch_name = await self._make_branch(base_branch_name)
@@ -257,7 +273,6 @@ class PipelineOrchestrator:
         ok = await transition_ticket(self._jira, ticket_key, "In Development")
         logger.info("jira_transition", ticket=ticket_key, status="In Development", ok=ok)
 
-        # ── Stage 3 + 4: Implement → Validate (with feedback loop) ──────
         impl_files = [f for f in plan.get("files_to_modify", [])]
         test_file_specs = plan.get("test_files", [])
 
@@ -278,6 +293,187 @@ class PipelineOrchestrator:
             diff_chars_per_hit=config.code_history_diff_chars_per_hit // 2,
         )
 
+        ctx = _GateContext(
+            ticket_key=ticket_key,
+            state=state,
+            config=config,
+            spec=spec,
+            plan=plan,
+            impl_files=impl_files,
+            test_file_specs=test_file_specs,
+            existing_contents=existing_contents,
+            past_review_signals=past_review_signals,
+        )
+
+        if config.ci_gate:
+            await self._run_ci_gate_flow(ctx)
+        else:
+            await self._run_validator_gate_flow(ctx)
+
+    # ------------------------------------------------------------------
+    # Gate flows
+    # ------------------------------------------------------------------
+
+    async def _run_ci_gate_flow(self, ctx: _GateContext) -> None:
+        """CI-as-gate flow.
+
+        The LLM validator runs ONCE as a cheap pre-flight filter (plus one
+        corrective pass) so we don't waste a CI run on obviously-broken code.
+        Authoritative correctness is then decided by REAL GitHub Actions CI:
+        every retry cycle is driven by actual build/test output, never the
+        validator's simulated review.
+        """
+        ticket_key, state, config = ctx.ticket_key, ctx.state, ctx.config
+        ci_max_attempts = config.ci_max_attempts
+
+        # ── Phase 1: Generate + cheap pre-flight validator filter ─────────
+        state.stage = "implementing"
+        impl_outputs, test_outputs = await self._generate_files(ctx, validator_feedback=[])
+
+        state.stage = "preflight"
+        validation = await self._validate(ctx, impl_outputs, test_outputs)
+        if not validation.get("passed"):
+            feedback = validation.get("issues", [])
+            logger.info("preflight_filter_failed", ticket=ticket_key, issues=feedback)
+            # ONE corrective pass — not a retry loop. CI is the real gate, so
+            # don't burn cycles here; just clear the obvious stuff cheaply.
+            impl_outputs, test_outputs = await self._generate_files(
+                ctx, validator_feedback=feedback
+            )
+        logger.info("preflight_complete", ticket=ticket_key, passed=validation.get("passed"))
+
+        # ── Phase 2: Mint, commit, open draft PR ──────────────────────────
+        files_changed = [o["path"] for o in impl_outputs + test_outputs]
+        minted = await self._mint(ctx, files_changed, validation.get("summary", ""))
+
+        state.stage = "committing"
+        commit_sha = await self._github.commit_changes(
+            branch=state.branch,
+            files=self._build_file_changes(ctx, impl_outputs, test_outputs),
+            message=minted["commit_message"],
+        )
+
+        state.stage = "opening_pr"
+        title = (
+            f"[WIP] {ctx.spec.get('title') or minted['pr_title']}"
+            if config.draft_prs
+            else minted["pr_title"]
+        )
+        pr = await self._github.open_pull_request(
+            branch=state.branch,
+            title=title,
+            body=minted["pr_body"],
+            base_branch=self._settings.github_base_branch,
+            draft=config.draft_prs,
+        )
+        state.pr_url = pr.url
+        state.pr_number = pr.number
+        await add_pipeline_comment(
+            self._jira, ticket_key,
+            f"🤖 Draft PR opened (#{pr.number}) — running real CI before marking it "
+            f"ready for review.\nPR: {pr.url}"
+        )
+
+        # ── Phase 3: Real CI loop = the gate ──────────────────────────────
+        # Pin polling to the SHA we just pushed — GitHub's PR.head.sha lags a
+        # ref update by seconds, so an unpinned poll would read the prior
+        # commit's checks. require_checks stays False here so a repo with no PR
+        # CI falls back to state="none".
+        state.stage = "waiting_for_ci"
+        ci_status = await self._github.poll_pr_until_complete(pr.number, head_sha=commit_sha)
+        state.ci_state = ci_status.state
+
+        attempt = 0
+        while ci_status.state == "failure" and attempt < ci_max_attempts:
+            attempt += 1
+            ci_logs = await self._github.get_failed_check_logs(pr.number)
+            logger.warning(
+                "ci_gate_retry", ticket=ticket_key, attempt=attempt, pr=pr.number,
+                failed=ci_status.failed,
+            )
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"🔄 CI attempt {attempt}/{ci_max_attempts} failed on PR #{pr.number} — "
+                f"fixing from real CI output.\nFailed checks: {', '.join(ci_status.failed)}"
+            )
+            ci_feedback = [f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"]
+
+            state.stage = "implementing"
+            impl_outputs, test_outputs = await self._generate_files(
+                ctx, validator_feedback=ci_feedback
+            )
+            state.stage = "committing"
+            fix_sha = await self._github.commit_changes(
+                branch=state.branch,
+                files=self._build_file_changes(ctx, impl_outputs, test_outputs),
+                message=f"fix: address CI failures (attempt {attempt})\n\n{minted['commit_message']}",
+            )
+            logger.info("ci_fix_committed", branch=state.branch, attempt=attempt, sha=fix_sha[:8])
+
+            # Pin to the fix SHA and require checks: we know this repo has CI,
+            # so wait for the NEW run to register rather than reading the prior
+            # commit's stale failure (which would burn every attempt instantly).
+            state.stage = "waiting_for_ci"
+            ci_status = await self._github.poll_pr_until_complete(
+                pr.number, head_sha=fix_sha, require_checks=True
+            )
+            state.ci_state = ci_status.state
+
+        # ── Phase 4: Finalize ─────────────────────────────────────────────
+        if ci_status.state == "failure":
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"❌ CI still failing after {ci_max_attempts} attempts on PR #{pr.number}. "
+                f"Left as a draft for manual review.\nPR: {pr.url}"
+            )
+            state.status = "failed"
+            state.error = f"CI failed after {ci_max_attempts} attempts: {ci_status.failed}"
+            return
+        if ci_status.state == "error":
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"⚠️ CI did not complete in time on PR #{pr.number}. "
+                f"Left as a draft for manual review.\nPR: {pr.url}"
+            )
+            state.status = "failed"
+            state.error = "CI polling timed out"
+            return
+        if ci_status.state == "closed":
+            # The PR was closed out-of-band, so GitHub stopped running CI on new
+            # commits. Don't wait out the timeout — stop with a clear reason.
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"⚠️ PR #{pr.number} was closed before CI could verify the change, "
+                f"so the pipeline can't confirm it. Reopen the PR or re-run the ticket.\n"
+                f"PR: {pr.url}"
+            )
+            state.status = "failed"
+            state.error = f"PR #{pr.number} was closed before CI completed"
+            return
+        if ci_status.state == "none":
+            # Repo has no PR CI — the pre-flight validator was the only gate.
+            logger.warning(
+                "ci_gate_no_checks", ticket=ticket_key, pr=pr.number,
+                hint="repo has no PR CI; relied on pre-flight validator only",
+            )
+            await add_pipeline_comment(
+                self._jira, ticket_key,
+                f"ℹ️ No CI checks ran on PR #{pr.number}; relied on pre-flight review only.\n"
+                f"PR: {pr.url}"
+            )
+
+        await self._finalize_pr(ctx, pr, minted)
+
+    async def _run_validator_gate_flow(self, ctx: _GateContext) -> None:
+        """Legacy flow: the LLM validator is the gate (no real CI in the loop).
+
+        Kept as an escape hatch via `ci_gate=False` for repos with no PR CI or
+        CI too slow to gate on. Implement → validate retries up to max_retries,
+        then open the PR and best-effort retry once against real CI output.
+        """
+        ticket_key, state, config = ctx.ticket_key, ctx.state, ctx.config
+        max_retries = config.max_retries_per_stage
+
         validation: dict = {}
         impl_outputs: list = []
         test_outputs: list = []
@@ -285,74 +481,24 @@ class PipelineOrchestrator:
 
         for attempt in range(1, max_retries + 1):
             state.stage = "implementing"
+            logger.info("implementation_attempt", ticket=ticket_key, attempt=attempt, max=max_retries)
+            impl_outputs, test_outputs = await self._generate_files(
+                ctx, validator_feedback=validator_feedback
+            )
             logger.info(
-                "implementation_attempt",
-                ticket=ticket_key,
-                attempt=attempt,
-                max=max_retries,
+                "stage_complete", stage="implementing", ticket=ticket_key,
+                files=len(impl_outputs) + len(test_outputs), attempt=attempt,
             )
 
-            impl_tasks = [
-                self._run_implementer(
-                    f, plan, spec, existing_contents, config, max_retries,
-                    validator_feedback=validator_feedback,
-                )
-                for f in impl_files
-            ]
-            impl_outputs = list(await asyncio.gather(*impl_tasks))
-
-            # Overlay implementer outputs so test_writer sees actual new code
-            impl_content_map = {
-                **existing_contents,
-                **{o["path"]: o["content"] for o in impl_outputs},
-            }
-            test_tasks = [
-                self._run_test_writer(
-                    t, spec, impl_content_map, config, max_retries,
-                    validator_feedback=validator_feedback,
-                )
-                for t in test_file_specs
-            ] if config.write_tests else []
-            test_outputs = list(await asyncio.gather(*test_tasks)) if test_tasks else []
-
-            logger.info(
-                "stage_complete",
-                stage="implementing",
-                ticket=ticket_key,
-                files=len(impl_outputs) + len(test_outputs),
-                attempt=attempt,
-            )
-
-            # ── Stage 4: Validate ─────────────────────────────────────────
             state.stage = "validator"
-            impl_map = {o["path"]: o["content"] for o in impl_outputs}
-            test_map = {o["path"]: o["content"] for o in test_outputs}
-
-            validator_input: dict[str, Any] = {
-                "spec": spec,
-                "implementation_files": impl_map,
-                "test_files": test_map,
-                "coding_standards": config.coding_standards,
-            }
-            if past_review_signals:
-                validator_input["past_review_signals"] = past_review_signals
-            validation = await _with_retry(
-                lambda: self._runner.run("validator", validator_input),
-                max_retries,
-                "validator",
-            )
-
+            validation = await self._validate(ctx, impl_outputs, test_outputs)
             if validation.get("passed"):
-                logger.info(
-                    "stage_complete", stage="validator", ticket=ticket_key, attempt=attempt
-                )
+                logger.info("stage_complete", stage="validator", ticket=ticket_key, attempt=attempt)
                 break
 
             validator_feedback = validation.get("issues", [])
             logger.warning(
-                "validation_failed_retrying",
-                ticket=ticket_key,
-                attempt=attempt,
+                "validation_failed_retrying", ticket=ticket_key, attempt=attempt,
                 issues=validator_feedback,
             )
             issues_text = "\n".join(f"- {i}" for i in validator_feedback)
@@ -365,48 +511,20 @@ class PipelineOrchestrator:
             issues = validation.get("issues", [])
             raise _HaltError(f"Validation failed after {max_retries} attempts: {'; '.join(issues)}")
 
-        all_impl_outputs = impl_outputs + test_outputs
+        files_changed = [o["path"] for o in impl_outputs + test_outputs]
+        minted = await self._mint(ctx, files_changed, validation.get("summary", ""))
 
-        # ── Stage 5: PR Minter ───────────────────────────────────────────
-        state.stage = "pr_minter"
-        files_changed = [o["path"] for o in all_impl_outputs]
-        minted = await _with_retry(
-            lambda: self._runner.run("pr_minter", {
-                "spec": spec,
-                "plan": plan,
-                "files_changed": files_changed,
-                "validator_summary": validation.get("summary", ""),
-                "ticket_key": ticket_key,
-            }),
-            max_retries,
-            "pr_minter",
-        )
-        logger.info("stage_complete", stage="pr_minter", ticket=ticket_key)
-
-        # ── Commit all files atomically ──────────────────────────────────
         state.stage = "committing"
-        file_changes = [
-            FileChange(
-                path=o["path"],
-                content=o["content"],
-                action=next(
-                    (f.get("action", "modify") for f in impl_files if f["path"] == o["path"]),
-                    "modify",
-                ),
-            )
-            for o in all_impl_outputs
-        ]
-        await self._github.commit_changes(
-            branch=branch_name,
-            files=file_changes,
+        commit_sha = await self._github.commit_changes(
+            branch=state.branch,
+            files=self._build_file_changes(ctx, impl_outputs, test_outputs),
             message=minted["commit_message"],
         )
-        logger.info("committed", branch=branch_name, files=len(file_changes))
+        logger.info("committed", branch=state.branch)
 
-        # ── Open PR ──────────────────────────────────────────────────────
         state.stage = "opening_pr"
         pr = await self._github.open_pull_request(
-            branch=branch_name,
+            branch=state.branch,
             title=minted["pr_title"],
             body=minted["pr_body"],
             base_branch=self._settings.github_base_branch,
@@ -414,80 +532,35 @@ class PipelineOrchestrator:
         state.pr_url = pr.url
         state.pr_number = pr.number
 
-        # ── Transition Jira → In Code Review ─────────────────────────────
         ok = await transition_ticket(self._jira, ticket_key, "In Code Review")
         logger.info("jira_transition", ticket=ticket_key, status="In Code Review", ok=ok)
         await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
 
-        # ── Poll CI ──────────────────────────────────────────────────────
         state.stage = "waiting_for_ci"
-        ci_status = await self._github.poll_pr_until_complete(pr.number)
+        ci_status = await self._github.poll_pr_until_complete(pr.number, head_sha=commit_sha)
         state.ci_state = ci_status.state
 
         if ci_status.state == "failure":
-            logger.warning(
-                "ci_failed", pr=pr.number, failed=ci_status.failed, ticket=ticket_key
-            )
-            # ── CI feedback loop ──────────────────────────────────────────
-            # Fetch the failure log and retry implementation on the same branch.
+            logger.warning("ci_failed", pr=pr.number, failed=ci_status.failed, ticket=ticket_key)
             ci_logs = await self._github.get_failed_check_logs(pr.number)
-            logger.info("ci_feedback_loop", ticket=ticket_key, pr=pr.number)
             await add_pipeline_comment(
                 self._jira, ticket_key,
                 f"CI failed on PR #{pr.number} — retrying implementation with failure details.\n"
                 f"Failed checks: {', '.join(ci_status.failed)}\nPR: {pr.url}"
             )
+            ci_feedback = [f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"]
 
-            ci_feedback = [
-                f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"
-            ]
-
-            # Re-run implementer + validator with CI failure as feedback
             for attempt in range(1, max_retries + 1):
                 state.stage = "implementing"
                 logger.info("ci_retry_attempt", ticket=ticket_key, attempt=attempt)
-
-                impl_tasks = [
-                    self._run_implementer(
-                        f, plan, spec, existing_contents, config, max_retries,
-                        validator_feedback=ci_feedback,
-                    )
-                    for f in impl_files
-                ]
-                impl_outputs = list(await asyncio.gather(*impl_tasks))
-
-                impl_content_map = {
-                    **existing_contents,
-                    **{o["path"]: o["content"] for o in impl_outputs},
-                }
-                test_tasks = [
-                    self._run_test_writer(
-                        t, spec, impl_content_map, config, max_retries,
-                        validator_feedback=ci_feedback,
-                    )
-                    for t in test_file_specs
-                ] if config.write_tests else []
-                test_outputs = list(await asyncio.gather(*test_tasks)) if test_tasks else []
-                all_impl_outputs = impl_outputs + test_outputs
-
-                state.stage = "validator"
-                impl_map = {o["path"]: o["content"] for o in impl_outputs}
-                test_map = {o["path"]: o["content"] for o in test_outputs}
-                validation = await _with_retry(
-                    lambda: self._runner.run("validator", {
-                        "spec": spec,
-                        "implementation_files": impl_map,
-                        "test_files": test_map,
-                        "coding_standards": config.coding_standards,
-                    }),
-                    max_retries,
-                    "validator",
+                impl_outputs, test_outputs = await self._generate_files(
+                    ctx, validator_feedback=ci_feedback
                 )
-
+                state.stage = "validator"
+                validation = await self._validate(ctx, impl_outputs, test_outputs)
                 if validation.get("passed"):
                     logger.info("ci_retry_validation_passed", attempt=attempt)
                     break
-
                 ci_feedback = [
                     f"CI failed with the following errors — fix ALL of them:\n{ci_logs}"
                 ] + validation.get("issues", [])
@@ -497,29 +570,18 @@ class PipelineOrchestrator:
                 state.error = f"CI checks failed and retry validation did not pass: {ci_status.failed}"
                 return
 
-            # Push fixed files as a new commit on the same branch
             state.stage = "committing"
-            file_changes = [
-                FileChange(
-                    path=o["path"],
-                    content=o["content"],
-                    action=next(
-                        (f.get("action", "modify") for f in impl_files if f["path"] == o["path"]),
-                        "modify",
-                    ),
-                )
-                for o in all_impl_outputs
-            ]
-            await self._github.commit_changes(
-                branch=branch_name,
-                files=file_changes,
+            fix_sha = await self._github.commit_changes(
+                branch=state.branch,
+                files=self._build_file_changes(ctx, impl_outputs, test_outputs),
                 message=f"fix: address CI failures\n\n{minted['commit_message']}",
             )
-            logger.info("ci_fix_committed", branch=branch_name)
+            logger.info("ci_fix_committed", branch=state.branch, sha=fix_sha[:8])
 
-            # Re-poll CI on the updated commit
             state.stage = "waiting_for_ci"
-            ci_status = await self._github.poll_pr_until_complete(pr.number)
+            ci_status = await self._github.poll_pr_until_complete(
+                pr.number, head_sha=fix_sha, require_checks=True
+            )
             state.ci_state = ci_status.state
 
             if ci_status.state == "failure":
@@ -534,12 +596,125 @@ class PipelineOrchestrator:
 
         state.status = "done"
         state.stage = "done"
-        logger.info(
-            "pipeline_complete",
-            ticket=ticket_key,
-            pr=pr.url,
-            ci=ci_status.state,
+        logger.info("pipeline_complete", ticket=ticket_key, pr=pr.url, ci=ci_status.state)
+
+    async def _finalize_pr(
+        self, ctx: _GateContext, pr: Any, minted: dict[str, Any]
+    ) -> None:
+        """Swap provisional draft text for the final minted PR, mark ready for
+        review, and transition the ticket to In Code Review."""
+        ticket_key, state, config = ctx.ticket_key, ctx.state, ctx.config
+        if config.draft_prs:
+            state.stage = "finalizing_pr"
+            await self._github.update_pull_request(
+                pr.number, title=minted["pr_title"], body=minted["pr_body"]
+            )
+            try:
+                await self._github.mark_pr_ready(pr.node_id)
+            except Exception as e:
+                # Non-fatal: the PR exists and CI is green; a human can click
+                # "Ready for review" if the mutation failed.
+                logger.warning("mark_pr_ready_failed", ticket=ticket_key, error=str(e))
+
+        ok = await transition_ticket(self._jira, ticket_key, "In Code Review")
+        logger.info("jira_transition", ticket=ticket_key, status="In Code Review", ok=ok)
+        await add_pipeline_comment(self._jira, ticket_key, minted["jira_comment"])
+
+        state.status = "done"
+        state.stage = "done"
+        logger.info("pipeline_complete", ticket=ticket_key, pr=pr.url, ci=state.ci_state)
+
+    # ------------------------------------------------------------------
+    # Stage helpers (shared by both gate flows)
+    # ------------------------------------------------------------------
+
+    async def _generate_files(
+        self, ctx: _GateContext, validator_feedback: list[str]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Run implementers (parallel) then test writers (parallel, seeing the
+        fresh implementer output). Returns (impl_outputs, test_outputs)."""
+        max_retries = ctx.config.max_retries_per_stage
+        impl_tasks = [
+            self._run_implementer(
+                f, ctx.plan, ctx.spec, ctx.existing_contents, ctx.config, max_retries,
+                validator_feedback=validator_feedback,
+            )
+            for f in ctx.impl_files
+        ]
+        impl_outputs = list(await asyncio.gather(*impl_tasks))
+
+        impl_content_map = {
+            **ctx.existing_contents,
+            **{o["path"]: o["content"] for o in impl_outputs},
+        }
+        test_tasks = [
+            self._run_test_writer(
+                t, ctx.spec, impl_content_map, ctx.config, max_retries,
+                validator_feedback=validator_feedback,
+            )
+            for t in ctx.test_file_specs
+        ] if ctx.config.write_tests else []
+        test_outputs = list(await asyncio.gather(*test_tasks)) if test_tasks else []
+        return impl_outputs, test_outputs
+
+    async def _validate(
+        self,
+        ctx: _GateContext,
+        impl_outputs: list[dict[str, Any]],
+        test_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        validator_input: dict[str, Any] = {
+            "spec": ctx.spec,
+            "implementation_files": {o["path"]: o["content"] for o in impl_outputs},
+            "test_files": {o["path"]: o["content"] for o in test_outputs},
+            "coding_standards": ctx.config.coding_standards,
+        }
+        if ctx.past_review_signals:
+            validator_input["past_review_signals"] = ctx.past_review_signals
+        stack = resolve_stack(ctx.config.language, stack=ctx.config.stack)
+        return await _with_retry(
+            lambda: self._runner.run(
+                "validator", validator_input,
+                system_suffix=system_suffix(stack, "validator"),
+            ),
+            ctx.config.max_retries_per_stage,
+            "validator",
         )
+
+    async def _mint(
+        self, ctx: _GateContext, files_changed: list[str], validator_summary: str
+    ) -> dict[str, Any]:
+        minted = await _with_retry(
+            lambda: self._runner.run("pr_minter", {
+                "spec": ctx.spec,
+                "plan": ctx.plan,
+                "files_changed": files_changed,
+                "validator_summary": validator_summary,
+                "ticket_key": ctx.ticket_key,
+            }),
+            ctx.config.max_retries_per_stage,
+            "pr_minter",
+        )
+        logger.info("stage_complete", stage="pr_minter", ticket=ctx.ticket_key)
+        return minted
+
+    @staticmethod
+    def _build_file_changes(
+        ctx: _GateContext,
+        impl_outputs: list[dict[str, Any]],
+        test_outputs: list[dict[str, Any]],
+    ) -> list[FileChange]:
+        return [
+            FileChange(
+                path=o["path"],
+                content=o["content"],
+                action=next(
+                    (f.get("action", "modify") for f in ctx.impl_files if f["path"] == o["path"]),
+                    "modify",
+                ),
+            )
+            for o in impl_outputs + test_outputs
+        ]
 
     # ------------------------------------------------------------------
     # Helpers
@@ -597,8 +772,14 @@ class PipelineOrchestrator:
         if historical_examples:
             input_data["historical_examples"] = historical_examples
 
+        stack = resolve_stack(config.language, stack=config.stack)
         return await _with_retry(
-            lambda: self._runner.run("implementer", input_data), max_retries, f"implementer:{path}"
+            lambda: self._runner.run(
+                "implementer", input_data,
+                system_suffix=system_suffix(stack, "implementer"),
+            ),
+            max_retries,
+            f"implementer:{path}",
         )
 
     async def _run_test_writer(
@@ -626,8 +807,14 @@ class PipelineOrchestrator:
         if validator_feedback:
             input_data["validator_feedback"] = validator_feedback
 
+        stack = resolve_stack(config.language, stack=config.stack)
         return await _with_retry(
-            lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
+            lambda: self._runner.run(
+                "test_writer", input_data,
+                system_suffix=system_suffix(stack, "test_writer"),
+            ),
+            max_retries,
+            f"test_writer:{path}",
         )
 
     async def _fetch_history(

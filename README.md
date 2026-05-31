@@ -35,29 +35,29 @@ process_ticket(PIT-42, approve_plan=True)
        │
        ├──────────────────────────┐
        ▼                          ▼
-[Implementer(s)]           [Test Writer(s)]   ← parallel
+[Implementer(s)]           [Test Writer(s)]   ← parallel, language-aware rule packs
        │                          │
        └──────────┬───────────────┘
                   ▼
-          [Validator]       Checks impl ↔ test coherence
-                  │         └─ if issues: feed back to implementer, retry
+          [Validator]       Cheap one-shot pre-flight filter (NOT the gate)
+                  │          └─ one corrective pass if it flags issues
                   ▼
-          [PR Minter]       Writes PR title, body, commit message
-                  │
-                  ▼
-       Atomic commit to branch → open PR → poll CI
-                  │
-                  ▼
-       JIRA ticket → "In Code Review"
+       Atomic commit → open DRAFT PR → poll REAL GitHub Actions CI
+                  │          └─ on fail: distill CI logs → fix → re-commit → re-poll
+                  │             (up to ci_max_attempts; pinned to the pushed SHA)
+                  ▼ ── CI green ──
+          [PR Minter] → mark PR ready for review → JIRA: "In Code Review"
 ```
 
 > **What this pipeline is today — a feature-addition engine, not a greenfield scaffolder.**
-> It evolves an *existing* codebase one ticket at a time: the Planner anchors on the
-> repo's existing files and conventions, the Implementer and Validator are additionally
-> grounded in merged-PR history (code-history). The Validator reviews the generated diff
-> **statically**, but the pipeline also gets real build/test signal by **polling the PR's CI
-> and feeding failures back into a fix-and-recommit loop** — so it only engages if the target
-> repo has CI building/testing PRs.
+> It evolves an *existing* codebase one ticket at a time: the Planner anchors on the repo's
+> existing files and conventions; the Implementer/Test-Writer/Validator are grounded in
+> **language-aware rule packs** (TypeScript vs JavaScript vs Python) and merged-PR history.
+> **Real GitHub Actions CI is the gate** — the change lands on a *draft* PR and a bounded loop
+> fixes against real build/test output (distilled to signal, not stack-frame noise) until CI is
+> green, then the PR is marked ready. The static Validator is just a cheap pre-flight filter so
+> a CI run isn't wasted on obviously broken output. (Repos with no PR CI fall back to the
+> Validator verdict; `ci_gate: false` keeps the legacy validator-as-gate flow.)
 > Point it at an empty repo and it has nothing to anchor on, so output drifts. **Establish
 > the project's foundation and conventions first** — by hand or from a scaffold — then let
 > the pipeline add and evolve features against that base. Greenfield scaffolding (an
@@ -68,15 +68,16 @@ process_ticket(PIT-42, approve_plan=True)
 - **AI ticket creation**: Describe a feature or bug in plain English, get a structured JIRA story
 - **AI enrichment**: Analyzes existing tickets and updates priority, labels, description, and acceptance criteria
 - **Autonomous pipeline**: Full Digester → Planner → Implementer → Validator → PR Minter pipeline with per-stage model routing (Opus for planning/implementation/validation, Sonnet for digest/tests, Haiku for PR text; enrichment uses configurable Haiku by default)
-- **Implementer-validator feedback loop**: If validation fails, blocking issues are fed back to the implementer which retries — up to `GIGA_PIPELINE_MAX_RETRIES` times
+- **Real CI as the gate**: The change lands on a **draft PR** and a bounded loop fixes against real GitHub Actions build/test output until CI is green, then marks the PR ready — up to `ci_max_attempts` cycles. The static Validator is a cheap pre-flight filter, not the decider. (`ci_gate: false` keeps the legacy validator-as-gate flow for repos without PR CI.)
+- **Language-aware rule packs**: Implementer/test-writer/validator rules are tailored per stack (`typescript-react` / `javascript-react` / `python`) from the repo's `language` (or explicit `stack`), so a TypeScript repo gets typed props and `tsc`-clean code instead of JavaScript PropTypes idioms
+- **Distilled CI feedback**: Failure logs are stripped of timestamps and `node_modules` stack frames down to the actual errors (tsc, assertion diffs, RTL messages) before being fed back to the implementer
 - **Human-in-the-loop gate**: Pipeline pauses after the Planner, posts the plan to JIRA, and waits for explicit approval before writing any code
 - **JIRA status tracking**: Tickets flow through `In Plan Review` → `In Development` → `In Code Review` → `Done` (on PR merge)
 - **Atomic commits**: All file changes land in a single commit via the GitHub Git Data API — no intermediate states
-- **CI integration**: Pipeline polls GitHub Actions after opening the PR and reports pass/fail back to JIRA
 - **Batch processing**: Enrich all unprocessed backlog tickets in one call
 - **Duplicate detection**: Fuzzy-matches tickets against recent issues to flag duplicates
 - **Subtask generation**: Automatically splits large tickets into actionable subtasks
-- **Retry logic**: Per-stage retry with exponential backoff; configurable `GIGA_PIPELINE_MAX_RETRIES`
+- **Retry logic**: Transient agent retries via `GIGA_PIPELINE_MAX_RETRIES`; CI fix cycles via `ci_max_attempts` (separate knobs)
 - **OAuth support**: Optional Cognito JWT authentication for streamable-http transport
 - **MCP Inspector support**: `--inspect` mode with mock clients for development
 - **File logging**: Set `GIGA_LOG_FILE` to write structured logs to a file alongside stderr
@@ -213,13 +214,17 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
 
 ```json
 {
-  "language": "python",
-  "test_framework": "pytest",
-  "test_command": "pytest",
-  "coding_standards": "Follow PEP 8. Use type hints. Use structlog for logging.",
+  "language": "typescript",
+  "stack": null,
+  "test_framework": "jest",
+  "test_command": "npm test",
+  "coding_standards": "TypeScript + React 18 function components. Type props with interfaces — NO PropTypes. Avoid any. CSS Modules for styling.",
   "source_dirs": ["src"],
-  "test_dirs": ["tests"],
+  "test_dirs": ["src"],
   "max_retries_per_stage": 3,
+  "ci_gate": true,
+  "ci_max_attempts": 5,
+  "draft_prs": true,
   "human_gate_after_planner": true,
   "branch_prefix": "auto/",
   "write_tests": true,
@@ -231,6 +236,11 @@ Add a `.giga-pipeline.json` to the root of any target repo to override defaults:
 
 | Field | Default | Description |
 | ----- | ------- | ----------- |
+| `language` | `"python"` | Selects the language-aware rule pack injected into the implementer/test-writer/validator. Recognized: `python` → `python`, `javascript`/`js` → `javascript-react`, `typescript`/`ts` → `typescript-react`. Anything else → no extra rules (relies on `coding_standards`). |
+| `stack` | `null` | Explicit rule-pack override when the `language` guess is wrong (e.g. non-React TypeScript). Wins over `language`. |
+| `ci_gate` | `true` | Use **real GitHub Actions CI as the gate**: open a draft PR, loop on CI output, mark ready when green. Set `false` to keep the legacy flow where the static Validator decides (for repos with no/slow PR CI). |
+| `ci_max_attempts` | `5` | Max real-CI fix cycles before giving up and leaving the PR a draft. Decoupled from `max_retries_per_stage` (which is for transient agent/API retries). |
+| `draft_prs` | `true` | Open the in-flight PR as a draft and mark it ready only once CI is green. |
 | `write_tests` | `true` | Whether the pipeline generates a test file alongside implementation |
 | `pipeline_model` | `null` | Force **all** pipeline stages onto one model. When `null` (default), each stage uses its per-stage assignment (Opus for planner/implementer/validator, Sonnet for digester/test_writer, Haiku for PR text) |
 | `code_history_hybrid` | `false` | When `true` and `GIGA_CODEHISTORY_ENABLED` is on, the implementer/validator receive the **actual GitHub diff** for each retrieved past PR — not just the Haiku summary. Costs one extra GitHub API call per hit per pipeline run; trade-off is better grounding in real code. Opt-in. |
@@ -390,11 +400,12 @@ src/giga_mcp_server/
 ├── jira/
 │   └── client.py      # JIRA API wrapper (atlassian-python-api)
 └── pipeline/
-    ├── agent_prompts.py   # Agent contracts (system prompts + I/O JSON schemas)
-    ├── agent_runner.py    # Claude Sonnet calls with schema validation + retry
-    ├── github_tools.py    # GitHub Data API: branches, files, atomic commits, PRs, CI polling
+    ├── agent_prompts.py   # Stack-agnostic agent contracts (system prompts + I/O JSON schemas)
+    ├── agent_runner.py    # Claude calls with schema validation + retry; injects rule-pack suffix
+    ├── rule_packs.py      # Language-aware rules (python / js-react / ts-react) + stack resolver
+    ├── github_tools.py    # GitHub Data API: branches, files, atomic commits, draft PRs, CI gate, log distill
     ├── jira_bridge.py     # ADF text extraction + pipeline-facing JIRA wrappers
-    ├── orchestrator.py    # Full pipeline: Digester→Planner→Impl∥Test→Validator→PRMinter
+    ├── orchestrator.py    # Full pipeline: Digest→Plan→Impl∥Test→pre-flight→draft PR→CI gate→ready
     └── repo_config.py     # .giga-pipeline.json loader with defaults
 
 infra/

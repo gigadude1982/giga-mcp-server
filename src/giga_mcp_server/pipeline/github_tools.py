@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +11,61 @@ import structlog
 
 logger = structlog.get_logger()
 
+# CI-log distillation. GitHub Actions logs are huge and prefixed with ISO
+# timestamps; naive keyword-greping surfaces a wall of dependency stack frames
+# (`at Object.foo (node_modules/...)`) and buries the one line the implementer
+# needs (the tsc error, the assertion diff, the RTL "Found multiple elements").
+# These patterns extract the actionable failure blocks instead.
+_TS_PREFIX = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s")
+# Noise to drop outright: stack frames and GitHub Actions runner ceremony.
+_LOG_NOISE = re.compile(
+    r"(^\s*at\s|node_modules|Post job cleanup|Temporarily overriding HOME|"
+    r"Adding repository directory|/usr/bin/git|^git version|^\[command\]|"
+    r"##\[(group|endgroup)\])"
+)
+# Lines that start a meaningful failure block — keep these plus trailing context.
+_LOG_HEADER = re.compile(
+    r"(●\s|^\s*FAIL\s|error TS\d|✕|✗|×|AssertionError|[A-Za-z]*Error:\s|"
+    r"Found multiple elements|Unable to find|is not assignable|"
+    r"Cannot find name|Property '|\d+:\d+\s+error|\bFAILED\b)"
+)
+# Standalone signal lines worth keeping even without a following block.
+_LOG_SIGNAL = re.compile(
+    r"(Expected|Received|Test Suites:|Tests:|SyntaxError|TypeError|ReferenceError)"
+)
+
+
+def _distill_log(text: str, *, max_lines: int = 140, context: int = 6) -> str:
+    """Pull the actionable lines out of a raw CI job log.
+
+    Strips ISO timestamps, drops node_modules stack frames, and keeps each
+    failure header plus a few following lines (so the assertion/diff/render
+    that explains a failure survives). Collapses blank runs.
+    """
+    kept: list[str] = []
+    ctx_remaining = 0
+    for raw in text.splitlines():
+        line = _TS_PREFIX.sub("", raw).rstrip()
+        if _LOG_NOISE.search(line):
+            continue
+        if _LOG_HEADER.search(line):
+            kept.append(line)
+            ctx_remaining = context
+        elif ctx_remaining > 0:
+            kept.append(line)
+            ctx_remaining -= 1
+        elif _LOG_SIGNAL.search(line):
+            kept.append(line)
+        if len(kept) >= max_lines:
+            break
+
+    collapsed: list[str] = []
+    for line in kept:
+        if not line.strip() and (collapsed and not collapsed[-1].strip()):
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed).strip()
+
 # TODO: consider replacing with github mcp server if cleaner
 # or SDK e.g. from github import Github
 # and move to github module to mirror jira client structure. For now, this is a minimal custom client
@@ -17,6 +73,7 @@ logger = structlog.get_logger()
 _GH_API = "https://api.github.com"
 _POLL_INTERVAL = 10  # seconds between CI status polls
 _POLL_TIMEOUT = 600  # seconds before giving up on CI
+_NO_CHECKS_GRACE = 30  # seconds to wait for any check to register before assuming none
 
 
 @dataclass
@@ -34,6 +91,8 @@ class PullRequest:
     url: str
     branch: str
     checks_url: str = ""
+    node_id: str = ""  # GraphQL global ID; required to mark a draft PR ready
+    draft: bool = False
 
 
 @dataclass
@@ -256,14 +315,21 @@ class GitHubClient:
         title: str,
         body: str,
         base_branch: str = "main",
+        draft: bool = False,
     ) -> PullRequest:
-        """Open a pull request. Returns PullRequest with number and URL."""
+        """Open a pull request. Returns PullRequest with number and URL.
+
+        draft: open as a draft PR. Used by the CI-gate flow so generated code
+               can be run through real CI before the PR is marked ready for
+               review. Convert to ready via mark_pr_ready() once CI is green.
+        """
         url = f"{_GH_API}/repos/{self._repo}/pulls"
         payload = {
             "title": title,
             "body": body,
             "head": branch,
             "base": base_branch,
+            "draft": draft,
         }
         async with httpx.AsyncClient(headers=self._headers) as client:
             resp = await client.post(url, json=payload)
@@ -275,20 +341,84 @@ class GitHubClient:
             url=data["html_url"],
             branch=branch,
             checks_url=data.get("statuses_url", ""),
+            node_id=data.get("node_id", ""),
+            draft=data.get("draft", draft),
         )
-        logger.info("pr_opened", repo=self._repo, pr=pr.number, url=pr.url)
+        logger.info("pr_opened", repo=self._repo, pr=pr.number, url=pr.url, draft=pr.draft)
         return pr
 
-    async def get_pr_status(self, pr_number: int) -> ChecksStatus:
-        """Get the current CI check status for a PR."""
-        # Get the PR's head SHA
+    async def update_pull_request(
+        self, pr_number: int, *, title: str | None = None, body: str | None = None
+    ) -> None:
+        """Update a PR's title and/or body. Used to swap the provisional draft
+        title for the final minted PR text once CI is green."""
+        payload: dict[str, str] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if not payload:
+            return
+        url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.patch(url, json=payload)
+            resp.raise_for_status()
+        logger.info("pr_updated", repo=self._repo, pr=pr_number)
+
+    async def mark_pr_ready(self, node_id: str) -> None:
+        """Mark a draft PR ready for review.
+
+        The REST API cannot toggle draft→ready, so this uses the GraphQL
+        markPullRequestReadyForReview mutation. node_id is the PR's GraphQL
+        global ID (PullRequest.node_id).
+        """
+        if not node_id:
+            logger.warning("mark_pr_ready_skipped", reason="no node_id")
+            return
+        query = (
+            "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"
+            "{pullRequest{isDraft}}}"
+        )
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            resp = await client.post(
+                f"{_GH_API}/graphql",
+                json={"query": query, "variables": {"id": node_id}},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(f"mark_pr_ready failed: {data['errors']}")
+        logger.info("pr_marked_ready", repo=self._repo)
+
+    async def _pr_is_open(self, pr_number: int) -> bool:
+        """True if the PR is still open. A closed PR stops GitHub from firing
+        pull_request CI on new commits, so the poller must give up instead of
+        waiting out the timeout for checks that will never register."""
         url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
         async with httpx.AsyncClient(headers=self._headers) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            head_sha = resp.json()["head"]["sha"]
+            return resp.json().get("state") == "open"
 
-            # Fetch check runs
+    async def get_pr_status(
+        self, pr_number: int, head_sha: str | None = None
+    ) -> ChecksStatus:
+        """Get the current CI check status for a PR.
+
+        head_sha: pin the check lookup to a specific commit. Pass the SHA
+            returned by commit_changes after pushing — otherwise we read the
+            PR's reported head.sha, which lags behind a Git Data API ref update
+            by a few seconds and would surface the PREVIOUS commit's (failed)
+            checks immediately after a fix push. check-runs are keyed by commit
+            SHA, so pinning the SHA we just pushed eliminates that race.
+        """
+        async with httpx.AsyncClient(headers=self._headers) as client:
+            if head_sha is None:
+                resp = await client.get(f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}")
+                resp.raise_for_status()
+                head_sha = resp.json()["head"]["sha"]
+
+            # Fetch check runs for the pinned commit
             checks_url = f"{_GH_API}/repos/{self._repo}/commits/{head_sha}/check-runs"
             resp = await client.get(checks_url)
             resp.raise_for_status()
@@ -319,11 +449,14 @@ class GitHubClient:
 
         return ChecksStatus(state=state, passed=passed, failed=failed, pending=pending)
 
-    async def get_failed_check_logs(self, pr_number: int, max_chars: int = 3000) -> str:
+    async def get_failed_check_logs(self, pr_number: int, max_chars: int = 6000) -> str:
         """Fetch stdout logs from failed CI check runs for a PR.
 
-        Returns a condensed string of the failure output suitable for feeding
-        back to the implementer as ci_failure_feedback.
+        Returns a distilled string of the failure output suitable for feeding
+        back to the implementer as ci_failure_feedback. The distillation keeps
+        the actionable failure blocks (tsc errors, assertion diffs, RTL "Found
+        multiple elements" messages) and drops timestamp prefixes and
+        node_modules stack frames so the model sees signal, not noise.
         """
         url = f"{_GH_API}/repos/{self._repo}/pulls/{pr_number}"
         async with httpx.AsyncClient(headers=self._headers) as client:
@@ -351,13 +484,9 @@ class GitHubClient:
                         log_url = f"{_GH_API}/repos/{self._repo}/actions/jobs/{job['id']}/logs"
                         log_resp = await client.get(log_url, follow_redirects=True)
                         if log_resp.status_code == 200:
-                            # Extract only error-relevant lines
-                            lines = log_resp.text.splitlines()
-                            error_lines = [
-                                line for line in lines
-                                if any(kw in line for kw in ("error", "Error", "ERROR", "failed", "FAIL", "✗", "×"))
-                            ]
-                            failure_logs.append(f"Job: {job['name']}\n" + "\n".join(error_lines[:50]))
+                            distilled = _distill_log(log_resp.text)
+                            if distilled:
+                                failure_logs.append(f"Job: {job['name']}\n{distilled}")
                 except Exception:
                     if logs_url:
                         failure_logs.append(f"Check: {run['name']} — see {logs_url}")
@@ -526,11 +655,25 @@ class GitHubClient:
         pr_number: int,
         timeout: int = _POLL_TIMEOUT,
         interval: int = _POLL_INTERVAL,
+        no_checks_grace: int = _NO_CHECKS_GRACE,
+        head_sha: str | None = None,
+        require_checks: bool = False,
     ) -> ChecksStatus:
-        """Poll PR checks until all complete or timeout is reached."""
+        """Poll PR checks until all complete or timeout is reached.
+
+        head_sha: pin polling to a specific commit (see get_pr_status). Always
+            pass the SHA returned by commit_changes so a just-pushed fix isn't
+            judged against the previous commit's stale checks.
+        require_checks: when True, never short-circuit to "none" — keep waiting
+            for checks to register. Use after a fix push to a repo we already
+            know has CI: checks for the new commit take a few seconds to appear,
+            and bailing to "none" in that window would skip the gate. When
+            False (the initial poll), a checkless repo still falls back to
+            "none" after no_checks_grace instead of blocking to the timeout.
+        """
         elapsed = 0
         while elapsed < timeout:
-            status = await self.get_pr_status(pr_number)
+            status = await self.get_pr_status(pr_number, head_sha=head_sha)
             if status.state != "pending":
                 logger.info(
                     "pr_checks_complete",
@@ -540,7 +683,23 @@ class GitHubClient:
                     failed=len(status.failed),
                 )
                 return status
-            logger.info("pr_checks_pending", pr=pr_number, elapsed=elapsed)
+            # No checks have registered yet — investigate why before waiting on.
+            no_checks_yet = not (status.passed or status.failed or status.pending)
+            if no_checks_yet:
+                # A closed PR will never get pull_request CI — give up clearly
+                # instead of waiting out the full timeout.
+                if not await self._pr_is_open(pr_number):
+                    logger.warning("pr_closed_no_ci", pr=pr_number, elapsed=elapsed)
+                    return ChecksStatus(state="closed")
+                # Open repo with no PR CI configured: fall back to "none" after
+                # the grace period (only when checks aren't required).
+                if not require_checks and elapsed >= no_checks_grace:
+                    logger.info("pr_no_checks", pr=pr_number, elapsed=elapsed)
+                    return ChecksStatus(state="none")
+            logger.info(
+                "pr_checks_pending", pr=pr_number, elapsed=elapsed,
+                awaiting_checks=no_checks_yet,
+            )
             await asyncio.sleep(interval)
             elapsed += interval
 
