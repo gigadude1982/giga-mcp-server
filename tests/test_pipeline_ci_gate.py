@@ -38,7 +38,7 @@ class FakeRunner:
         self.calls: collections.Counter = collections.Counter()
         self.model_override = None
 
-    async def run(self, stage: str, input_data: dict) -> dict:
+    async def run(self, stage: str, input_data: dict, system_suffix: str = "") -> dict:
         self.calls[stage] += 1
         if stage == "implementer":
             return {"path": input_data["path"], "content": "// code", "explanation": "e"}

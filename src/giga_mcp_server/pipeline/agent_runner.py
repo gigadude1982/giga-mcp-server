@@ -43,12 +43,21 @@ class AgentRunner:
         config = AGENT_REGISTRY.get(agent_name, {})
         return self.model_override or config.get("model") or self.model
 
-    async def run(self, agent_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
+    async def run(
+        self,
+        agent_name: str,
+        input_data: dict[str, Any],
+        system_suffix: str = "",
+    ) -> dict[str, Any]:
         """Run a named agent, returning validated output.
 
         Validates input against the agent's input_schema, calls Claude,
         then validates the parsed JSON output against the agent's output_schema.
         Retries up to _MAX_PARSE_RETRIES times on parse/validation failures.
+
+        system_suffix: optional stack-specific rule text appended to the agent's
+        static system prompt (see pipeline.rule_packs). Empty string = the
+        agent's base, stack-agnostic prompt unchanged.
         """
         if agent_name not in AGENT_REGISTRY:
             raise ValueError(f"Unknown agent: {agent_name!r}. "
@@ -56,6 +65,9 @@ class AgentRunner:
 
         config = AGENT_REGISTRY[agent_name]
         model = self.resolve_model(agent_name)
+        system_prompt = config["system_prompt"]
+        if system_suffix:
+            system_prompt = f"{system_prompt}\n\n{system_suffix}"
         self._validate_schema(input_data, config["input_schema"], context=f"{agent_name}.input")
 
         user_message = json.dumps(input_data, indent=2)
@@ -67,7 +79,7 @@ class AgentRunner:
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=_MAX_TOKENS,
-                    system=config["system_prompt"],
+                    system=system_prompt,
                     messages=messages,
                 )
                 raw_text = response.content[0].text.strip()

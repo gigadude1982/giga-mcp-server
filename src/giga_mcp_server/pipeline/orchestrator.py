@@ -17,6 +17,7 @@ from giga_mcp_server.pipeline.jira_bridge import (
     transition_ticket,
 )
 from giga_mcp_server.pipeline.repo_config import RepoConfig, load_repo_config
+from giga_mcp_server.pipeline.rule_packs import resolve_stack, system_suffix
 from giga_mcp_server.vector import CodeHistoryStore
 
 logger = structlog.get_logger()
@@ -658,8 +659,12 @@ class PipelineOrchestrator:
         }
         if ctx.past_review_signals:
             validator_input["past_review_signals"] = ctx.past_review_signals
+        stack = resolve_stack(ctx.config.language, stack=ctx.config.stack)
         return await _with_retry(
-            lambda: self._runner.run("validator", validator_input),
+            lambda: self._runner.run(
+                "validator", validator_input,
+                system_suffix=system_suffix(stack, "validator"),
+            ),
             ctx.config.max_retries_per_stage,
             "validator",
         )
@@ -755,8 +760,14 @@ class PipelineOrchestrator:
         if historical_examples:
             input_data["historical_examples"] = historical_examples
 
+        stack = resolve_stack(config.language, stack=config.stack)
         return await _with_retry(
-            lambda: self._runner.run("implementer", input_data), max_retries, f"implementer:{path}"
+            lambda: self._runner.run(
+                "implementer", input_data,
+                system_suffix=system_suffix(stack, "implementer"),
+            ),
+            max_retries,
+            f"implementer:{path}",
         )
 
     async def _run_test_writer(
@@ -784,8 +795,14 @@ class PipelineOrchestrator:
         if validator_feedback:
             input_data["validator_feedback"] = validator_feedback
 
+        stack = resolve_stack(config.language, stack=config.stack)
         return await _with_retry(
-            lambda: self._runner.run("test_writer", input_data), max_retries, f"test_writer:{path}"
+            lambda: self._runner.run(
+                "test_writer", input_data,
+                system_suffix=system_suffix(stack, "test_writer"),
+            ),
+            max_retries,
+            f"test_writer:{path}",
         )
 
     async def _fetch_history(

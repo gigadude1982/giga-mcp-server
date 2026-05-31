@@ -209,7 +209,10 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 Rules:
 - Return the COMPLETE file content — not a diff, not a partial snippet.
-- Follow the coding standards exactly.
+- Follow the coding_standards exactly, and follow the stack-specific rules \
+appended to this prompt (if any) — they describe how to write build-worthy code \
+for this repo's language and framework. coding_standards and the stack rules are \
+authoritative; do not introduce idioms from other languages.
 - Do not add unrelated changes outside the scope of the plan.
 - If action is "delete", return content as empty string.
 - Imports must be at the top. No circular imports.
@@ -218,16 +221,11 @@ hooks, utilities, context providers, and module patterns rather than reimplement
 - If a shared component or utility already exists that satisfies the need, import and \
 use it. Do not create duplicates.
 - Match the naming conventions, file structure, and export style of existing files.
-- For React projects: prefer existing context hooks over prop drilling, reuse existing \
-layout/wrapper components, and follow the same state management patterns already in use.
-- For React projects: every prop used in a component MUST be declared in a PropTypes \
-definition. Missing PropTypes will trigger the react/prop-types ESLint rule and fail \
-the build. Always import PropTypes and add a .propTypes block at the bottom of the file.
-- If you create a CSS module file (e.g. Foo.module.css), you MUST import it in the \
-component: `import styles from './Foo.module.css'` and reference classes as \
-`styles.className`. Never create a CSS module and leave it unimported.
-- If the test plan references data-testid attributes, you MUST add those attributes \
-to the corresponding JSX elements in the implementation (e.g. data-testid="footer-tagline").
+- If the test plan references data-testid attributes (or the equivalent test hooks \
+for this stack), you MUST add those attributes to the corresponding elements.
+- Your output is committed directly with NO formatter run. If coding_standards \
+includes a formatter config (e.g. Prettier), your code MUST already match it exactly \
+— a formatter/lint violation fails CI. When in doubt, match existing_content's style.
 - If validator_feedback is present, your PRIMARY job is to fix every issue listed \
 before anything else. Each item is a blocking problem from a previous attempt that \
 caused the build, tests, or linter to fail. Address every single one explicitly — \
@@ -244,22 +242,6 @@ diff over the summary for understanding the exact code shape; the summary only \
 exists for fast navigation. A `... [truncated, N more chars]` marker means the \
 patch was cut off — extrapolate from what you can see, do not assume the missing \
 section contradicts the visible pattern.
-- CRITICAL: Your output will be committed directly without running a formatter. If \
-coding_standards includes a Prettier config, your code MUST already be formatted exactly \
-as Prettier would format it — correct line length, quote style, trailing commas, bracket \
-spacing, and JSX formatting. A Prettier lint error will fail the CI build. When in doubt, \
-break long lines and match the style of existing_content exactly.
-- JSX attribute formatting: Prettier's rule is ALL-or-nothing per element. If the opening \
-tag including ALL attributes fits within printWidth on ONE line, every attribute MUST stay \
-on that same line — do NOT break short tags across multiple lines. Only break attributes \
-to separate lines when the entire opening tag would exceed printWidth. Count the full \
-line: indentation + tag name + space + all attributes + closing `>`. If it fits, keep it \
-on one line. If it doesn't fit, put each attribute on its own indented line with `>` on \
-its own line. Never put some attributes on one line and others on new lines.
-- React imports: NEVER add `import React from 'react'` in files that use the automatic \
-JSX transform (React 17+). Check existing_content and related_files — if no other file \
-imports React directly, the project uses the automatic transform and the import is \
-unnecessary. Adding it will trigger the no-unused-vars ESLint rule and fail the build.
 """,
         "input_schema": {
             "type": "object",
@@ -339,27 +321,12 @@ Rules:
 - Include both happy-path and edge-case tests.
 - Mock external dependencies appropriately for the test framework.
 - Match the project's existing test patterns, imports, and file naming conventions.
-- The file path extension must match the project language (e.g. .test.js for JavaScript, \
-.test.py for Python).
-
-React / Jest specific rules (apply when test_framework is jest):
-- Use @testing-library/react: render, screen, fireEvent, waitFor, userEvent.
-- Use @testing-library/jest-dom matchers (toBeInTheDocument, toHaveTextContent, etc).
-- Always wrap components or hooks that consume a React context in the appropriate \
-Provider — failure to do so will cause tests to throw at runtime.
-- Mock fetch/axios calls with jest.fn() or jest.spyOn(); restore mocks in afterEach.
-- Prefer queries in this order: getByRole, getByLabelText, getByText, getByTestId.
-- Only use getByTestId if the implementation file contains a matching data-testid attribute. \
-Never reference a data-testid that doesn't exist in the component.
-- Always pass ALL required props when rendering a component. Check the component's \
-PropTypes definition and pass every isRequired prop in every render/renderHook call. \
-Missing required props will cause tests to fail or render undefined values.
-- Do not use screen.debug() in committed tests.
-- Test files live alongside source (e.g. src/components/Foo.test.js, not tests/Foo.test.js).
-- NEVER add `import React from 'react'` in test files for projects using the automatic \
-JSX transform (React 17+). Check implementation_contents — if no file imports React \
-directly, the project uses the automatic transform and the import is an unused variable \
-that will fail the no-unused-vars ESLint rule.
+- The file path extension must match the project language and the stack-specific \
+rules appended to this prompt (e.g. .test.tsx for TypeScript React, .test.jsx for \
+JavaScript React, test_*.py for Python).
+- Follow the stack-specific test rules appended below (if any) and coding_standards \
+exactly — they describe the test framework, file placement, and language gotchas \
+for this repo. The generated tests must compile/type-check, not just read correctly.
 - If validator_feedback is present, your PRIMARY job is to fix every issue listed \
 before anything else. Each item is a blocking problem from a previous attempt. \
 Address every single one explicitly.
@@ -434,18 +401,15 @@ required arguments to functions.
 - No syntax errors: unclosed brackets, mismatched JSX tags, missing commas in \
 object literals, etc.
 
-### Formatter / linter (use coding_standards if provided)
-- If a Prettier config is present in coding_standards, mentally apply it. Flag \
-any line that would be reformatted: lines exceeding printWidth, wrong quote style, \
-missing/extra trailing commas, incorrect bracket spacing, or JSX that Prettier \
-would reflow. A Prettier violation will fail the CI build.
-- JSX attribute formatting (critical): if an opening tag + ALL its attributes fits \
-within printWidth on one line, Prettier REQUIRES them on one line. Flag any element \
-where attributes are unnecessarily broken across multiple lines when they would fit \
-on one line. This is a common Prettier violation — check every JSX element.
-- If an ESLint config is present, flag violations of its rules. Common blockers: \
-missing PropTypes definitions (react/prop-types), unused variables (no-unused-vars), \
-missing useEffect dependency arrays (react-hooks/exhaustive-deps).
+### Formatter / linter / language (use coding_standards + the stack rules below)
+- If a formatter config (e.g. Prettier) is present in coding_standards, mentally \
+apply it and flag any line it would reformat (line length, quotes, trailing commas, \
+bracket spacing, JSX reflow). A formatter violation fails the CI build.
+- If a linter config (e.g. ESLint) is present, flag violations of its rules.
+- Apply the stack-specific build/lint checks appended to this prompt (if any). They \
+describe the language-specific failures that break THIS repo's CI — e.g. TypeScript \
+type errors and the correct prop-typing mechanism. Do not flag rules from a language \
+the repo does not use (e.g. do not demand PropTypes in a TypeScript project).
 
 ### Test coherence
 - Tests import only from paths present in implementation_files.

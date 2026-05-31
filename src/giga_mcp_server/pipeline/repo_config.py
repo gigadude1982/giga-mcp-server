@@ -10,6 +10,10 @@ logger = structlog.get_logger()
 
 _DEFAULTS: dict[str, Any] = {
     "language": "python",
+    # Explicit rule-pack stack override (see pipeline/rule_packs.py). When None,
+    # the stack is derived from `language`. Set this for cases the language guess
+    # gets wrong, e.g. non-React TypeScript: "stack": "typescript".
+    "stack": None,
     "test_framework": "pytest",
     "test_command": "pytest",
     "coding_standards": (
@@ -47,6 +51,7 @@ _DEFAULTS: dict[str, Any] = {
 @dataclass
 class RepoConfig:
     language: str = "python"
+    stack: str | None = None
     test_framework: str = "pytest"
     test_command: str = "pytest"
     coding_standards: str = ""
@@ -69,6 +74,7 @@ class RepoConfig:
         merged = {**defaults, **data}
         return cls(
             language=merged["language"],
+            stack=merged["stack"],
             test_framework=merged["test_framework"],
             test_command=merged["test_command"],
             coding_standards=merged["coding_standards"],
